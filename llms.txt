@@ -1,0 +1,20 @@
+# Specter Decision Engine
+
+> Specter Decision Engine is a Python 3.11+ framework for bounded typed numeric decisions. Current prerelease: v0.2.0rc5. It includes local System-One backend code, explicit failure states, OpenAPI integration, amortized prefill caching, and an optional native C prefill path.
+
+Use the pinned installation brief for installation tasks. A successful package doctor check verifies installation only; it does not prove domain accuracy, calibration quality, benchmark reproducibility, or production readiness. License selection remains pending.
+
+## Installation
+
+- [Pinned rc5 install brief](./llms-install.txt): Exact wheel, SHA-256, virtual-environment rules, verification steps, and scope constraints for humans or agents.
+- [Official v0.2.0rc5 release](https://github.com/aigodsend9-boop/specter-decision-engine/releases/tag/v0.2.0rc5): Published release metadata and assets.
+
+## Project
+
+- [Source repository](https://github.com/aigodsend9-boop/specter-decision-engine): Project source and history.
+- [Release wheel](./releases/specter_decision_engine-0.2.0rc5-py3-none-any.whl): Pinned wheel mirrored beside this site.
+- [SHA256SUMS](./releases/SHA256SUMS): Checksum file for the pinned wheel.
+
+## Optional
+
+- [Human landing page](./): Visual project overview, architecture, installation UI, and agent handoff.

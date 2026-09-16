@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#070b0a" />
+  <meta name="description" content="Specter Decision Engine rc5 — typed numeric decisions, local System-One backends, bounded execution and agent-ready installation." />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Specter Decision Engine — Typed decisions. Not chat." />
+  <meta property="og:description" content="Typed decision infrastructure with local System-One backends, amortized prefill and explicit failure states." />
+  <meta property="og:image" content="./specter-architecture.png" />
+  <title>Specter Decision Engine — Typed decisions. Not chat.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="describedby" href="./llms.txt" />
+  <script type="module" crossorigin src="./assets/index-D8EYEE5c.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-0VLeKTxF.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <canvas id="specter-canvas" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Specter Decision Engine home"><span class="brand-mark">S</span><span>SPECTER</span></a>
+    <nav aria-label="Primary navigation"><a href="#why">Why</a><a href="#system-one">System One</a><a href="#install">Install</a><a href="#llm-install">LLM handoff</a></nav>
+    <a class="ghost-button" href="https://github.com/aigodsend9-boop/specter-decision-engine/releases/tag/v0.2.0rc5" target="_blank" rel="noopener">Get rc5 <span>↗</span></a>
+  </header>
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy reveal">
+        <div class="eyebrow"><span class="pulse"></span> v0.2.0rc5 · System-One local · prerelease</div>
+        <h1>Decision infrastructure<br /><span>without the chat layer.</span></h1>
+        <p class="lede">Specter turns application state into bounded, typed numeric decisions — <strong>Noul</strong>, <strong>Choice</strong>, and <strong>Score</strong> — with explicit failures, local System-One backends and calibration hooks.</p>
+        <div class="hero-actions">
+          <a class="primary-button" href="#install">Install the framework <span>↓</span></a>
+          <a class="secondary-button" href="#llm-install">Give it to an LLM <span>↗</span></a>
+        </div>
+        <div class="micro-proof"><span>Python 3.11+</span><i></i><span>0 mandatory Python deps</span><i></i><span>OpenAPI 3.1</span><i></i><span>native prefill optional</span></div>
+      </div>
+      <div class="hero-console reveal delay-1" aria-label="Example typed decision result">
+        <div class="console-bar"><div class="traffic"><span></span><span></span><span></span></div><span>decision.json</span><span class="live">typed</span></div>
+        <pre><code><span class="dim">{</span>
+  <span class="key">"id"</span>: <span class="string">"route"</span>,
+  <span class="key">"type"</span>: <span class="string">"choice"</span>,
+  <span class="key">"status"</span>: <span class="ok">"ok"</span>,
+  <span class="key">"value"</span>: <span class="accent">"engineering"</span>,
+  <span class="key">"probabilities"</span>: <span class="number">[0.05, 0.85, 0.10]</span>,
+  <span class="key">"confidence"</span>: <span class="number">0.81</span>
+<span class="dim">}</span></code></pre>
+        <div class="console-foot"><span>bounded output</span><span>no fabricated fallback</span></div>
+      </div>
+    </section>
+    <section class="signal-strip" aria-label="Core principles"><span>STATE</span><b>→</b><span>IMMUTABLE SNAPSHOT</span><b>→</b><span>PARALLEL EVALUATION</span><b>→</b><span>CALIBRATION</span><b>→</b><span>TYPED RESULT</span></section>
+
+    <section class="section" id="why">
+      <div class="section-head reveal"><div><span class="kicker">01 / primitives</span><h2>Three outputs.<br />No ambiguous shape.</h2></div><p>The framework keeps the decision surface deliberately small. Your backend supplies finite logits; Specter validates, calibrates, projects and returns a predictable contract.</p></div>
+      <div class="primitive-grid">
+        <article class="primitive-card reveal"><span class="card-index">01</span><div class="primitive-icon noul">◉</div><h3>Noul</h3><p>Probability of yes on a binary question, with <code>[P(no), P(yes)]</code>.</p><div class="mini-output"><span>0</span><div><i style="width:78%"></i></div><strong>1</strong></div></article>
+        <article class="primitive-card reveal delay-1"><span class="card-index">02</span><div class="primitive-icon">⌘</div><h3>Choice</h3><p>One option from an explicit candidate set. Deterministic argmax projection.</p><div class="choice-stack"><i></i><i class="active"></i><i></i></div></article>
+        <article class="primitive-card reveal delay-2"><span class="card-index">03</span><div class="primitive-icon">≋</div><h3>Score</h3><p>A continuous expected level over an ordered rubric you define.</p><div class="score-bars"><i></i><i></i><i></i><i></i><i></i></div></article>
+      </div>
+    </section>
+
+    <section class="section compact" id="principles">
+      <div class="principle-grid">
+        <div class="principle reveal"><span>Independent</span><h3>Questions do not contaminate siblings.</h3><p>Each evaluation sees the same immutable state snapshot, not preceding answers.</p></div>
+        <div class="principle reveal delay-1"><span>Explicit failure</span><h3>Errors never become invented decisions.</h3><p>Timeouts, invalid outputs and missing calibration are typed failure states.</p></div>
+        <div class="principle reveal delay-2"><span>Bring your own intelligence</span><h3>The kernel is not a hidden model.</h3><p>Connect your own numeric backend and validated domain calibration.</p></div>
+      </div>
+    </section>
+
+    <section class="section system-one-section" id="system-one">
+      <div class="section-head reveal"><div><span class="kicker">02 / System-One local</span><h2>Prefill once.<br />Decide many.</h2></div><p>rc5 adds a bit-mask lexical prefill path and a content-addressed cache for the local backend. The wheel also carries an optional native C prefill core while retaining a Python fallback.</p></div>
+      <div class="system-one-shell reveal">
+        <div class="system-one-visual" aria-hidden="true">
+          <div class="prefill-orbit orbit-1"></div><div class="prefill-orbit orbit-2"></div>
+          <div class="prefill-core"><span>STATE</span><small>prefill</small></div>
+          <div class="prefill-branch b1"><i></i><span>NOUL</span></div>
+          <div class="prefill-branch b2"><i></i><span>CHOICE</span></div>
+          <div class="prefill-branch b3"><i></i><span>SCORE</span></div>
+        </div>
+        <div class="system-one-copy">
+          <div class="equation"><span>cost</span><strong>C<sub>prefill</sub> + Q · C<sub>head</sub></strong><small>amortized across questions sharing the same state</small></div>
+          <div class="metric-grid">
+            <div class="metric"><strong>7-bit</strong><span>cue-bank membership mask</span></div>
+            <div class="metric"><strong>1×</strong><span>prefill per cached state</span></div>
+            <div class="metric"><strong>~0.45 µs/op</strong><span>published rc5 C-prefill benchmark</span></div>
+            <div class="metric"><strong>fallback</strong><span>native core optional, Python remains available</span></div>
+          </div>
+          <p class="benchmark-note">Benchmark figure is the release author's rc5 measurement, not a universal latency guarantee. Real performance depends on hardware, workload and runtime.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section install-section" id="install">
+      <div class="section-head reveal"><div><span class="kicker">03 / install</span><h2>From zero to a verified<br />framework install.</h2></div><p>The pinned rc5 wheel is served with this page. Create an isolated environment, install the exact artifact, then run <code>doctor</code>. No Git clone required.</p></div>
+      <div class="install-shell reveal">
+        <div class="install-tabs" role="tablist" aria-label="Operating system"><button class="os-tab active" data-os="windows" role="tab">Windows</button><button class="os-tab" data-os="unix" role="tab">macOS / Linux</button><span class="artifact-state">SHA256 pinned</span></div>
+        <div class="install-body">
+          <ol class="steps">
+            <li><span>1</span><div><strong>Create a virtual environment</strong><p>Keep Specter isolated from your system Python.</p></div></li>
+            <li><span>2</span><div><strong>Install the rc5 wheel</strong><p>The command below resolves to this site's pinned rc5 release artifact.</p></div></li>
+            <li><span>3</span><div><strong>Verify with doctor</strong><p>This confirms installation integrity, not model readiness.</p></div></li>
+          </ol>
+          <div class="terminal" data-install-terminal>
+            <div class="terminal-head"><span>terminal</span><button class="copy-button" data-copy="install">Copy commands</button></div>
+            <pre><code id="install-command"></code></pre>
+          </div>
+        </div>
+        <div class="install-meta"><a href="./releases/specter_decision_engine-0.2.0rc5-py3-none-any.whl" download>Download wheel ↗</a><a href="./releases/SHA256SUMS">SHA256SUMS ↗</a><a href="https://github.com/aigodsend9-boop/specter-decision-engine/releases/tag/v0.2.0rc5" target="_blank" rel="noopener">Release notes ↗</a><span>Wheel SHA-256 <code>ee15e254…9816b4</code></span></div>
+      </div>
+      <p class="install-note reveal"><strong>Important:</strong> Specter 0.2.0rc5 is a prerelease framework build. Local System-One backends are included, but no <code>doctor</code> result certifies domain accuracy, calibration quality or production readiness.</p>
+    </section>
+    <section class="section llm-section" id="llm-install">
+      <div class="llm-panel reveal">
+        <div class="llm-copy"><span class="kicker">04 / machine handoff</span><h2>Send one link.<br />Let the LLM do the careful part.</h2><p>The site publishes a concise <code>/llms.txt</code> entry point plus a pinned install brief. An agent gets the exact artifact, SHA-256, environment rules and <code>doctor</code> verification — including what it must <em>not</em> assume.</p>
+          <div class="llm-actions"><a class="primary-button" href="./llms.txt" target="_blank" rel="noopener">Open /llms.txt <span>↗</span></a><button class="secondary-button" data-copy="llm">Copy ready-to-send prompt</button></div>
+          <p class="llm-link-label">Shareable endpoint</p><div class="url-box"><code id="llm-url"></code><button data-copy="url" aria-label="Copy LLM install URL">Copy</button></div>
+        </div>
+        <div class="agent-card" aria-hidden="true"><div class="agent-orbit orbit-a"></div><div class="agent-orbit orbit-b"></div><div class="agent-core"><span>LLM</span><small>INSTALL<br/>PROTOCOL</small></div><div class="agent-status"><i></i> deterministic handoff</div></div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture">
+      <div class="section-head reveal"><div><span class="kicker">05 / architecture</span><h2>A narrow waist<br />for decision systems.</h2></div><p>Python applications can call the SDK directly. Other runtimes can integrate through the authenticated HTTP contract and OpenAPI schema.</p></div>
+      <figure class="architecture-card reveal"><img src="./specter-architecture.png" loading="lazy" alt="Specter Decision Engine architecture: state and questions branch into Noul, Choice and Score typed results." /><figcaption><span>State + questions → calibrated typed results</span><span>Framework preview · bring your own model + calibration</span></figcaption></figure>
+      <div class="api-row reveal"><div><span>POST</span><code>/v1/decision/evaluate</code></div><div><span>GET</span><code>/v1/decision/capabilities</code></div><div><span>GET</span><code>/v1/decision/openapi.json</code></div></div>
+    </section>
+    <section class="closing section reveal"><span class="kicker">Specter Decision Engine</span><h2>Make the output boring.<br /><em>Make the decision legible.</em></h2><div class="hero-actions"><a class="primary-button" href="#install">Install rc5 <span>↓</span></a><a class="secondary-button" href="./llms-install.txt">Machine instructions <span>↗</span></a></div></section>
+  </main>
+  <footer><div class="brand"><span class="brand-mark">S</span><span>SPECTER</span></div><p>Created by Guilherme Peralta Novaes · developed with AI assistance.</p><div><a href="#top">Top ↑</a></div></footer>
+  <div class="toast" role="status" aria-live="polite">Copied to clipboard</div>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "Specter Decision Engine",
+    "version": "0.2.0rc5",
+    "description": "Typed numeric decision kernel with local System-One backends and agent-ready installation.",
+    "programmingLanguage": "Python",
+    "runtimePlatform": "Python 3.11+",
+    "codeRepository": "https://github.com/aigodsend9-boop/specter-decision-engine",
+    "author": {"@type":"Person","name":"Guilherme Peralta Novaes"}
+  }
+  </script>
+</body>
+</html>

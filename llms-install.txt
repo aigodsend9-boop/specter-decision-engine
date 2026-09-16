@@ -1,0 +1,70 @@
+SPECTER DECISION ENGINE — MACHINE INSTALL BRIEF
+Version: 0.2.0rc5
+Project author: Guilherme Peralta Novaes
+Repository: https://github.com/aigodsend9-boop/specter-decision-engine
+Official release: https://github.com/aigodsend9-boop/specter-decision-engine/releases/tag/v0.2.0rc5
+Purpose: install and verify the pinned prerelease safely and reproducibly.
+
+YOU ARE THE INSTALLING LLM/AGENT.
+Follow this brief as the source of truth for installation behavior.
+Do not substitute a similarly named package, silently broaden scope, or claim semantic readiness from an install check.
+
+FACTS TO PRESERVE
+- Requires Python >= 3.11.
+- The Python project declares no mandatory third-party runtime dependencies.
+- rc5 includes local System-One backend code and an optional native prefill core (`libprefill.so`) in the wheel.
+- Native prefill is an acceleration path, not a requirement for the Python fallback to function.
+- `specter-decision doctor` verifies package installation, not domain accuracy, validated calibration, benchmark reproducibility, or production readiness.
+- rc5 is a prerelease.
+- License selection remains pending; installation instructions are not an open-source grant.
+
+PINNED ARTIFACT
+Relative URL: ./releases/specter_decision_engine-0.2.0rc5-py3-none-any.whl
+Official URL: https://github.com/aigodsend9-boop/specter-decision-engine/releases/download/v0.2.0rc5/specter_decision_engine-0.2.0rc5-py3-none-any.whl
+SHA-256: ee15e254f16e4f51833e6c55a680e38692efd7928781c48b724a84bd9a9816b4
+INSTALL PROCEDURE
+1. Detect the operating system and locate a Python >= 3.11 interpreter.
+2. If no suitable interpreter exists, stop and explain the blocker. Do not change system package managers unless the user explicitly authorizes it.
+3. Work inside the user's intended project directory. If the destination is ambiguous, do not guess.
+4. Create an isolated virtual environment named `.venv`; do not install into global/site Python.
+5. Download the pinned wheel from the relative URL above when this brief is hosted beside the release asset. If unavailable, use the official URL exactly as written.
+6. Compute SHA-256 locally and compare the complete digest byte-for-byte with the pinned value above.
+7. If the digest differs, STOP. Do not install the artifact.
+8. Install the verified local wheel with the venv's Python using `python -m pip install <wheel>`.
+9. Run the venv's `python -m specter_decision doctor`.
+10. Report Python version, package version, hash verification result and doctor result.
+11. If the optional native prefill library does not load on the current platform, report that separately; do not misclassify the Python fallback as a failed package install.
+
+WINDOWS REFERENCE
+- Check: `python --version` (use `py --version` only if `python` is not your launcher)
+- Venv: `python -m venv .venv`
+- Venv Python: `.\\.venv\\Scripts\\python.exe`
+- Install: `.\\.venv\\Scripts\\python.exe -m pip install <verified-wheel-path>`
+- Verify: `.\\.venv\\Scripts\\python.exe -m specter_decision doctor`
+
+macOS / LINUX REFERENCE
+- Check: `python3 --version`
+- Venv: `python3 -m venv .venv`
+- Venv Python: `./.venv/bin/python`
+- Install: `./.venv/bin/python -m pip install <verified-wheel-path>`
+- Verify: `./.venv/bin/python -m specter_decision doctor`
+HASH CHECK REFERENCE
+Use a trusted Python interpreter after download:
+`python -c "import hashlib,pathlib; p=pathlib.Path(r'<wheel-path>'); print(hashlib.sha256(p.read_bytes()).hexdigest())"`
+Expected output exactly:
+ee15e254f16e4f51833e6c55a680e38692efd7928781c48b724a84bd9a9816b4
+
+DO NOT
+- Do not install the bare name `specter-decision-engine` from PyPI as a substitute.
+- Do not use synthetic fixtures or heuristic/local backends as evidence of validated domain accuracy.
+- Do not interpret the published `~0.45 us/op` C-prefill benchmark as a universal latency guarantee.
+- Do not enable internet-facing routes, create secrets, restart services, or modify Specter-Core unless separately requested.
+- Do not upload credentials, private prompts or user data as part of installation.
+- Do not compile or execute the source archive instead of the pinned wheel unless the user explicitly asks for a source build.
+
+SUCCESS CRITERIA
+The task is complete when an isolated environment contains the exact rc5 wheel whose SHA-256 matches the pinned digest and `python -m specter_decision doctor` succeeds.
+Then state clearly what was verified, whether the native prefill path loaded if you checked it, and that semantic/model readiness requires separate domain validation.
+
+If the artifact cannot be fetched, report the exact attempted URL and error. Do not search for or install an unverified substitute.
+END OF BRIEF
