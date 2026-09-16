@@ -1,916 +1,113 @@
 {
   "openapi": "3.1.1",
   "info": {
-    "title": "Specter Decision Engine",
-    "version": "0.2.0rc2",
-    "description": "Numeric decisions only. Release candidate, no trained model included. State remains data, never executable instructions."
+    "title": "Specter Decision API",
+    "version": "0.3.0",
+    "summary": "Decisões tipadas, independentes e limitadas. Sem geração de texto.",
+    "description": "Avalia um estado imutável contra perguntas tipadas (noul, choice, score) e devolve decisões numéricas com probabilidades e confiança. status=ok no envelope significa requisição processada, não que todas as perguntas decidiram."
   },
-  "security": [
-    {
-      "BearerAuth": []
-    }
-  ],
+  "servers": [{"url": "https://{host}", "variables": {"host": {"default": "127.0.0.1:8888"}}}],
+  "security": [{"bearerAuth": []}],
   "paths": {
     "/v1/decision/evaluate": {
       "post": {
-        "operationId": "specterDecide",
-        "summary": "Evaluate isolated questions over a single state",
+        "operationId": "evaluate",
+        "summary": "Avalia perguntas tipadas sobre um estado",
         "requestBody": {
           "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Request"
-              }
-            }
-          }
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EvaluateRequest"}}}
         },
         "responses": {
-          "200": {
-            "description": "Request evaluated; inspect each decision.status.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "408": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          }
+          "200": {"description": "Envelope processado", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Envelope"}}}},
+          "401": {"description": "Token ausente ou inválido", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "422": {"description": "Requisição fora do contrato", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "429": {"description": "Concorrência esgotada", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+          "503": {"description": "Não configurado ou sem fábrica de engine", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     },
     "/v1/decision/capabilities": {
       "get": {
-        "operationId": "specterDecisionCapabilities",
-        "responses": {
-          "200": {
-            "description": "Configuration only, not evidence of calibration or model performance.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Capabilities"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          }
-        }
+        "operationId": "capabilities",
+        "summary": "Configuração e limites correntes",
+        "responses": {"200": {"description": "Capacidades", "content": {"application/json": {"schema": {"type": "object"}}}}}
       }
     },
     "/v1/decision/openapi.json": {
       "get": {
-        "operationId": "specterDecisionSpec",
-        "responses": {
-          "200": {
-            "description": "OpenAPI 3.1 document",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Typed error; no free-form provider details.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Response"
-                }
-              }
-            }
-          }
-        }
+        "operationId": "contract",
+        "summary": "Este documento",
+        "responses": {"200": {"description": "Contrato OpenAPI", "content": {"application/json": {"schema": {"type": "object"}}}}}
       }
     }
   },
   "components": {
-    "securitySchemes": {
-      "BearerAuth": {
-        "type": "http",
-        "scheme": "bearer"
-      }
-    },
+    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
     "schemas": {
-      "Request": {
+      "EvaluateRequest": {
         "type": "object",
+        "required": ["state", "questions"],
         "additionalProperties": false,
-        "required": [
-          "state",
-          "questions",
-          "domain"
-        ],
         "properties": {
-          "state": {
-            "type": [
-              "string",
-              "object"
-            ]
-          },
-          "domain": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_.-]{1,128}$"
-          },
+          "domain": {"type": "string", "default": "default"},
+          "state": {"description": "Estado JSON imutável, até 256 KiB."},
           "questions": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 128,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "id",
-                "type",
-                "instructions"
-              ],
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 128
-                },
-                "type": {
-                  "enum": [
-                    "noul",
-                    "choice",
-                    "score"
-                  ]
-                },
-                "instructions": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 8192
-                },
-                "criteria": {
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4096
-                  }
-                },
-                "tolerance": {
-                  "type": "number",
-                  "exclusiveMinimum": 0,
-                  "default": 0.5
-                }
-              },
-              "allOf": [
-                {
-                  "if": {
-                    "properties": {
-                      "type": {
-                        "const": "noul"
-                      }
-                    }
-                  },
-                  "then": {
-                    "properties": {
-                      "criteria": {
-                        "maxItems": 0
-                      }
-                    }
-                  }
-                },
-                {
-                  "if": {
-                    "properties": {
-                      "type": {
-                        "const": "choice"
-                      }
-                    }
-                  },
-                  "then": {
-                    "required": [
-                      "criteria"
-                    ],
-                    "properties": {
-                      "criteria": {
-                        "minItems": 2,
-                        "maxItems": 255
-                      }
-                    }
-                  }
-                },
-                {
-                  "if": {
-                    "properties": {
-                      "type": {
-                        "const": "score"
-                      }
-                    }
-                  },
-                  "then": {
-                    "required": [
-                      "criteria"
-                    ],
-                    "properties": {
-                      "criteria": {
-                        "minItems": 2,
-                        "maxItems": 10
-                      }
-                    }
-                  }
-                }
-              ]
-            }
+            "description": "Lista ou mapa de perguntas tipadas (máx. 128).",
+            "oneOf": [
+              {"type": "array", "maxItems": 128, "items": {"$ref": "#/components/schemas/Question"}},
+              {"type": "object", "additionalProperties": {"$ref": "#/components/schemas/Question"}}
+            ]
           }
         }
       },
       "Question": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "type",
-          "instructions"
-        ],
+        "required": ["type"],
         "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "type": {
-            "enum": [
-              "noul",
-              "choice",
-              "score"
-            ]
-          },
-          "instructions": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 8192
-          },
-          "criteria": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 4096
-            }
-          },
-          "tolerance": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "default": 0.5
-          }
-        },
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "type": {
-                  "const": "noul"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "criteria": {
-                  "maxItems": 0
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "type": {
-                  "const": "choice"
-                }
-              }
-            },
-            "then": {
-              "required": [
-                "criteria"
-              ],
-              "properties": {
-                "criteria": {
-                  "minItems": 2,
-                  "maxItems": 255
-                }
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "type": {
-                  "const": "score"
-                }
-              }
-            },
-            "then": {
-              "required": [
-                "criteria"
-              ],
-              "properties": {
-                "criteria": {
-                  "minItems": 2,
-                  "maxItems": 10
-                }
-              }
-            }
-          }
-        ]
+          "id": {"type": "string", "maxLength": 64},
+          "type": {"type": "string", "enum": ["noul", "choice", "score"]},
+          "instructions": {"type": "string", "maxLength": 4096},
+          "text": {"type": "string", "maxLength": 4096},
+          "criteria": {"description": "Mapa opção->rubrica (choice), lista ordenada (score) ou {true,false} (noul)."},
+          "labels": {"type": "array", "items": {"type": "string"}},
+          "tolerance": {"type": "number", "minimum": 0, "default": 0.5}
+        }
+      },
+      "Envelope": {
+        "type": "object",
+        "required": ["status", "contract", "answers"],
+        "properties": {
+          "status": {"type": "string", "enum": ["ok"]},
+          "contract": {"type": "string", "const": "specter-decision/0.3"},
+          "domain": {"type": "string"},
+          "model": {"type": "string"},
+          "request_id": {"type": "string"},
+          "elapsed_ms": {"type": "number"},
+          "answers": {"type": "array", "items": {"$ref": "#/components/schemas/Decision"}}
+        }
       },
       "Decision": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "id",
-          "type",
-          "status",
-          "value",
-          "probabilities",
-          "confidence",
-          "legend",
-          "error"
-        ],
+        "required": ["id", "type", "status", "value", "probabilities", "confidence", "legend", "error"],
         "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "type": {
-            "enum": [
-              "noul",
-              "choice",
-              "score"
-            ]
-          },
-          "status": {
-            "enum": [
-              "ok",
-              "error"
-            ]
-          },
-          "value": {
-            "type": [
-              "number",
-              "string",
-              "null"
-            ]
-          },
-          "probabilities": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "array",
-                "minItems": 2,
-                "maxItems": 255,
-                "items": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                }
-              }
-            ]
-          },
-          "confidence": {
-            "type": [
-              "number",
-              "null"
-            ],
-            "minimum": 0,
-            "maximum": 1
-          },
-          "legend": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 255,
-            "items": {
-              "type": "string"
-            }
-          },
-          "error": {
-            "enum": [
-              null,
-              "INVALID_INPUT",
-              "UNCALIBRATED",
-              "TIMEOUT",
-              "BACKEND_ERROR",
-              "INVALID_OUTPUT"
-            ]
-          }
-        },
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "status": {
-                  "const": "error"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "value": {
-                  "type": "null"
-                },
-                "probabilities": {
-                  "type": "null"
-                },
-                "confidence": {
-                  "type": "null"
-                },
-                "error": {
-                  "type": "string"
-                }
-              }
-            },
-            "else": {
-              "properties": {
-                "value": {
-                  "type": [
-                    "number",
-                    "string"
-                  ]
-                },
-                "probabilities": {
-                  "type": "array"
-                },
-                "confidence": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "error": {
-                  "type": "null"
-                }
-              },
-              "allOf": [
-                {
-                  "if": {
-                    "properties": {
-                      "type": {
-                        "const": "choice"
-                      }
-                    }
-                  },
-                  "then": {
-                    "properties": {
-                      "value": {
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "else": {
-                    "properties": {
-                      "value": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 9
-                      }
-                    }
-                  }
-                },
-                {
-                  "if": {
-                    "properties": {
-                      "type": {
-                        "const": "noul"
-                      }
-                    }
-                  },
-                  "then": {
-                    "properties": {
-                      "value": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      },
-                      "probabilities": {
-                        "minItems": 2,
-                        "maxItems": 2
-                      },
-                      "legend": {
-                        "const": [
-                          "false",
-                          "true"
-                        ]
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          }
-        ]
+          "id": {"type": "string"},
+          "type": {"type": "string", "enum": ["noul", "choice", "score"]},
+          "status": {"type": "string", "enum": ["ok", "error"]},
+          "value": {"oneOf": [{"type": "number"}, {"type": "string"}, {"type": "null"}]},
+          "probabilities": {"oneOf": [{"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}}, {"type": "null"}]},
+          "confidence": {"oneOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]},
+          "legend": {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
+          "error": {"oneOf": [{"type": "string", "enum": ["UNCALIBRATED", "TIMEOUT", "BACKEND_ERROR", "INVALID_OUTPUT", "ABSTAINED"]}, {"type": "null"}]},
+          "receipt": {"type": "string", "description": "Hash auditável, presente apenas quando o engine roda com receipts=True."}
+        }
       },
-      "Response": {
+      "Error": {
         "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "api_version",
-          "status",
-          "error",
-          "decisions"
-        ],
+        "required": ["status", "error"],
         "properties": {
-          "api_version": {
-            "const": "1"
-          },
-          "status": {
-            "enum": [
-              "ok",
-              "error"
-            ]
-          },
-          "error": {
-            "enum": [
-              null,
-              "NOT_CONFIGURED",
-              "UNAUTHORIZED",
-              "INVALID_INPUT",
-              "TOO_LARGE",
-              "UNSUPPORTED_MEDIA_TYPE",
-              "UNSUPPORTED_ENCODING",
-              "NOT_FOUND",
-              "METHOD_NOT_ALLOWED",
-              "BUSY",
-              "NOT_READY",
-              "INTERNAL_ERROR",
-              "READ_TIMEOUT"
-            ]
-          },
-          "decisions": {
-            "type": "array",
-            "maxItems": 128,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "id",
-                "type",
-                "status",
-                "value",
-                "probabilities",
-                "confidence",
-                "legend",
-                "error"
-              ],
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 128
-                },
-                "type": {
-                  "enum": [
-                    "noul",
-                    "choice",
-                    "score"
-                  ]
-                },
-                "status": {
-                  "enum": [
-                    "ok",
-                    "error"
-                  ]
-                },
-                "value": {
-                  "type": [
-                    "number",
-                    "string",
-                    "null"
-                  ]
-                },
-                "probabilities": {
-                  "oneOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "type": "array",
-                      "minItems": 2,
-                      "maxItems": 255,
-                      "items": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      }
-                    }
-                  ]
-                },
-                "confidence": {
-                  "type": [
-                    "number",
-                    "null"
-                  ],
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "legend": {
-                  "type": "array",
-                  "minItems": 2,
-                  "maxItems": 255,
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "error": {
-                  "enum": [
-                    null,
-                    "INVALID_INPUT",
-                    "UNCALIBRATED",
-                    "TIMEOUT",
-                    "BACKEND_ERROR",
-                    "INVALID_OUTPUT"
-                  ]
-                }
-              },
-              "allOf": [
-                {
-                  "if": {
-                    "properties": {
-                      "status": {
-                        "const": "error"
-                      }
-                    }
-                  },
-                  "then": {
-                    "properties": {
-                      "value": {
-                        "type": "null"
-                      },
-                      "probabilities": {
-                        "type": "null"
-                      },
-                      "confidence": {
-                        "type": "null"
-                      },
-                      "error": {
-                        "type": "string"
-                      }
-                    }
-                  },
-                  "else": {
-                    "properties": {
-                      "value": {
-                        "type": [
-                          "number",
-                          "string"
-                        ]
-                      },
-                      "probabilities": {
-                        "type": "array"
-                      },
-                      "confidence": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                      },
-                      "error": {
-                        "type": "null"
-                      }
-                    },
-                    "allOf": [
-                      {
-                        "if": {
-                          "properties": {
-                            "type": {
-                              "const": "choice"
-                            }
-                          }
-                        },
-                        "then": {
-                          "properties": {
-                            "value": {
-                              "type": "string"
-                            }
-                          }
-                        },
-                        "else": {
-                          "properties": {
-                            "value": {
-                              "type": "number",
-                              "minimum": 0,
-                              "maximum": 9
-                            }
-                          }
-                        }
-                      },
-                      {
-                        "if": {
-                          "properties": {
-                            "type": {
-                              "const": "noul"
-                            }
-                          }
-                        },
-                        "then": {
-                          "properties": {
-                            "value": {
-                              "type": "number",
-                              "minimum": 0,
-                              "maximum": 1
-                            },
-                            "probabilities": {
-                              "minItems": 2,
-                              "maxItems": 2
-                            },
-                            "legend": {
-                              "const": [
-                                "false",
-                                "true"
-                              ]
-                            }
-                          }
-                        }
-                      }
-                    ]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "status": {
-                  "const": "error"
-                }
-              }
-            },
-            "then": {
-              "properties": {
-                "error": {
-                  "type": "string"
-                },
-                "decisions": {
-                  "maxItems": 0
-                }
-              }
-            },
-            "else": {
-              "properties": {
-                "error": {
-                  "type": "null"
-                },
-                "decisions": {
-                  "minItems": 1
-                }
-              }
-            }
-          }
-        ]
-      },
-      "Capabilities": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "api_version",
-          "release",
-          "backend_configured",
-          "production_ready",
-          "question_types",
-          "text_generation",
-          "action_execution",
-          "max_body_bytes",
-          "max_questions"
-        ],
-        "properties": {
-          "api_version": {
-            "const": "1"
-          },
-          "release": {
-            "const": "0.2.0rc2"
-          },
-          "backend_configured": {
-            "type": "boolean"
-          },
-          "production_ready": {
-            "const": false
-          },
-          "question_types": {
-            "const": [
-              "noul",
-              "choice",
-              "score"
-            ]
-          },
-          "text_generation": {
-            "const": false
-          },
-          "action_execution": {
-            "const": false
-          },
-          "max_body_bytes": {
-            "const": 262144
-          },
-          "max_questions": {
-            "const": 128
-          }
+          "status": {"type": "string", "enum": ["error"]},
+          "error": {"type": "string", "enum": ["NOT_CONFIGURED", "NOT_READY", "UNAUTHORIZED", "INVALID_INPUT", "OVERLOADED", "METHOD_NOT_ALLOWED"]},
+          "detail": {"type": "string"}
         }
       }
     }

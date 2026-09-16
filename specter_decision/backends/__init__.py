@@ -1,14 +1,16 @@
-"""Numeric backends for Specter Decision Engine.
+"""Backends de referência.
 
-None of these is Jev's model or TypeSafe weights.
+`system_one` é um baseline heurístico local, determinístico e sem pesos
+treinados — serve para medir latência real e comparar contra regras.
+
+`jev` é o adaptador para a API System One da TypeSafe, para quando o
+operador tem credencial e quer um modelo treinado por trás do mesmo
+contrato tipado. Importe-o explicitamente
+(`from specter_decision.backends.jev import JevRemoteBackend`): ele não é
+carregado por padrão, para que o pacote continue sem qualquer caminho de
+rede ativo por omissão.
 """
-from .local_lexical import LocalLexicalBackend
-from .typesafe_jev import TypeSafeJevBackend
-from .system_one_local import SystemOneLocalBackend, SystemOneCalibration
 
-__all__ = [
-    "LocalLexicalBackend",
-    "TypeSafeJevBackend",
-    "SystemOneLocalBackend",
-    "SystemOneCalibration",
-]
+from .system_one import SystemOneCalibration, SystemOneLocalBackend, tokenize
+
+__all__ = ["SystemOneCalibration", "SystemOneLocalBackend", "tokenize"]

@@ -1,110 +1,264 @@
-# Specter Decision Engine — desenho original MVP 0.1
+# Specter Decision Engine 0.3.0
 
-Autor do projeto: **Guilherme Peralta Novaes**. Desenvolvido com assistência de IA.
+**Decisões tipadas, não texto.** Kernel numérico para avaliação de decisões
+limitadas e independentes dentro de software e agentes.
 
-Atualização: release candidate 0.2.0rc1 integrada em disco ao Core. Ver `RELEASE.md` para API, SDK remoto, limites, ativação e gates de produção. Este documento preserva o desenho inicial; o módulo `engine.py` agora é um import de compatibilidade para `specter_decision.engine`.
+Autor do projeto original: **Guilherme Peralta Novaes**. Esta versão 0.3.0 é
+um refinamento do desenho 0.1/0.2, feito com assistência de IA, preservando
+o contrato público e a postura de honestidade do repositório original.
 
-Status: núcleo Python executável; modelo semântico, calibração real e integração de produção PENDENTES. Sem geração de texto, rede, instalação, daemon ou mudanças no Core ativo. Não é reprodução dos pesos/treinamento proprietário do Jev.
+> **Status honesto.** O núcleo é executável, testado e medido. **Não há
+> modelo treinado embarcado.** O backend local (`SystemOneLocalBackend`) é
+> um pontuador léxico determinístico — um *baseline de regras* auditável,
+> não um modelo semântico. Calibração real, avaliação semântica e gates de
+> produção continuam pendentes e dependem do operador. Este projeto não
+> reproduz os pesos nem o treinamento do Jev.
 
-## 1. SDK
+---
 
-Python 3.11+, biblioteca padrão. `engine.py`: `SpecterDecisionEngine`, `Question`, protocolos `Backend` e `Calibration`.
+## 1. Por que este formato existe
+
+Um LLM devolve string. Para o software usar, alguém precisa parsear,
+validar e torcer para o modelo não sair dos trilhos. A alternativa é
+inverter o contrato: o programa declara **antecipadamente** quais respostas
+são possíveis, e o modelo devolve **números** sobre esse conjunto fechado.
+
+| | LLM de chat | Decisão tipada |
+|---|---|---|
+| Saída | string arbitrária | valor do conjunto declarado |
+| Erro de tipo | possível | impossível por construção |
+| Incerteza | opcional e mal calibrada | distribuição + confiança em todo retorno |
+| Falha | vira texto plausível | vira erro tipado, nunca uma decisão |
+| Amostragem | sequencial por token | projeção paralela e independente |
+
+Três primitivas, iguais às do desenho original:
+
+| Tipo | `value` | `probabilities` / `legend` | Evento calibrado da `confidence` |
+|---|---|---|---|
+| `noul` | P(sim) em [0,1] | `[P(não), P(sim)]` / `[false,true]` | classificação pelo limiar 0.5 correta |
+| `choice` | opção do argmax; empate resolve pelo menor índice | ordem das opções de entrada | opção escolhida correta |
+| `score` | soma(i × P(i)) em [0, K−1] | ordem da legenda de entrada | erro absoluto ≤ `tolerance` |
+
+`confidence` é P(evento acima) — não é entropia, não é `max(probabilities)`
+cru e não é declaração do modelo sobre si mesmo.
+
+## 2. Começo rápido
+
+Requer apenas Python 3.11+. Sem dependências em runtime.
+
+```bash
+python -m unittest discover -s tests -v     # 126 testes
+python -m specter_decision.cli capabilities
+python tools/bench.py --iterations 300
+```
 
 ```python
-from engine import Question, SpecterDecisionEngine
+import asyncio
+from specter_decision import (
+    Question, SpecterDecisionEngine, SystemOneLocalBackend, SystemOneCalibration,
+)
 
-# Objetos fornecidos pela aplicação; não vêm implementados como modelo neste MVP.
 engine = SpecterDecisionEngine(
-    backend=trained_numeric_backend,
-    calibration=validated_calibration,
-    domain="support-v1", concurrency=8, timeout=2.0,
+    SystemOneLocalBackend(),
+    SystemOneCalibration(domain="suporte-v1"),   # troque por artefato real
+    domain="suporte-v1",
+    concurrency=8,
+    timeout=2.0,
 )
-answers = await engine.decide(
-    state={"ticket": "Exportação falha no Safari; funciona no Chrome."},
-    questions=[
-        Question("workaround", "noul", "Existe alternativa operacional?"),
-        Question("route", "choice", "Qual equipe deve analisar?",
-                 ("billing", "engineering", "support")),
-        Question("severity", "score", "Qual a severidade?",
-                 ("cosmético", "falha com alternativa", "bloqueio sem alternativa"),
-                 tolerance=0.5),
+
+answers = asyncio.run(engine.decide(
+    {"ticket": "A integração de pagamentos falhou e estou perdendo vendas."},
+    [
+        Question.choice("equipe", "Qual equipe deve atender?", {
+            "billing":   "Cobrança, faturas, reembolso",
+            "technical": "Erros, integrações, indisponibilidade",
+            "sales":     "Preço, upgrade, contrato",
+        }),
+        Question.score("severidade", "Qual a severidade?",
+                       ["cosmético", "falha com alternativa", "bloqueio sem alternativa"]),
+        Question.noul("urgente", "O relato indica urgência?"),
     ],
-)
-route = answers[1]
-if route["status"] == "ok" and route["confidence"] >= approved_threshold:
-    selected_queue = route["value"]  # Decisão não autoriza nem executa ação.
+))
+
+rota = answers[0]
+if rota["status"] == "ok" and rota["confidence"] >= 0.85:
+    fila = rota["value"]        # a decisão NÃO autoriza nem executa ação
 ```
 
-Execução local reproduzível: `python -m unittest -v`. As fixtures de `test_engine.py` são exclusivamente sintéticas; não usar suas probabilidades/confiança em produção.
+Descrever as opções (`criteria`) melhora materialmente a qualidade: é a
+diferença entre o modelo ver `"alpha"` e ver `"alpha: cobrança, faturas e
+reembolso"`. Há teste cobrindo exatamente esse ganho.
 
-Resposta de sucesso, ilustrativa (não inferência real):
+## 2.1 Exemplos executáveis
 
-```json
-{"id":"route","type":"choice","status":"ok","value":"engineering","probabilities":[0.05,0.85,0.10],"confidence":0.81,"legend":["billing","engineering","support"],"error":null}
-```
+Todos rodam sem rede e sem configuração:
 
-| Tipo | value | probabilities / legend | Evento calibrado para confidence |
-|---|---|---|---|
-| noul | P(sim), [0,1] | [P(não), P(sim)] / [false,true] | classificação pelo limiar 0.5 correta |
-| choice | opção argmax; empate resolve pela primeira | ordem das opções de entrada | opção escolhida correta |
-| score | soma(i × P(i)), [0,K−1] | ordem da legenda de entrada | erro absoluto da nota ≤ tolerance |
-
-`confidence` é P(evento definido acima), não entropia nem declaração do modelo. Noul probabilístico não representa uma probabilidade de segunda ordem.
-
-Erros por pergunta mantêm os campos: `status=error`, `value/probabilities/confidence=null`, `error` enum (`UNCALIBRATED`, `TIMEOUT`, `BACKEND_ERROR`, `INVALID_OUTPUT`). Não inventar uma decisão para preencher falhas. Requisições inválidas são rejeitadas com `ValueError('INVALID_INPUT')` antes da inferência; um futuro transporte HTTP deve mapear para erro JSON tipado, não HTTP 200. Cancelamento pelo chamador propaga.
-
-## 2. Arquitetura
-
-```text
-state → snapshot JSON imutável → validação → parallel sampler (limite/deadline)
-                                              ├─ state + pergunta A → logits A
-                                              ├─ state + pergunta B → logits B
-                                              └─ state + pergunta C → logits C
-          logits → calibração versionada → projeção tipada → validação → SDK
-```
-
-- Implementado: chamadas async isoladas, mesmo snapshot, IDs não enviados ao modelo, concorrência global por instância/event loop, deadline incluindo espera, resultado na ordem original. Sem contexto compartilhado de respostas, retries ou logs de state.
-- Não confundir concorrência de chamadas com paralelismo GPU: o backend deve ser cooperativo e não bloquear o event loop. CPU exige worker/executor; batches tensoriais exigem backend próprio. Adaptador não confiável precisa isolamento de processo: o contrato sozinho não impede estado interno compartilhado.
-- Modelo alvo: encoder discriminativo compacto + scorer de pares `(state, pergunta, candidato)`; candidato sim/não para Noul, opções para Choice, níveis para Score. Cabeças numéricas, nenhuma cabeça autoregressiva. Treinar com rótulos do domínio, não presumir generalização de perguntas arbitrárias.
-- Produção: codificar state uma vez, attention das perguntas para state, sem attention entre perguntas. Microbatch com máscara de candidatos, segment-softmax por pergunta e índices para recompor respostas. Nunca softmax global. Não prometer latência constante quando o batch excede capacidade.
-- Sampler aqui significa projeção probabilística independente, não múltiplas amostras textuais. Argmax/esperança determinísticos reduzem custo e variância; amostragem estocástica seria opção futura separada.
-- Formato: construir objetos no código a partir de números finitos e labels permitidos; não pedir JSON ao modelo. Validar cardinalidade, simplex, limites, discriminação do tipo. Garantia de formato não é garantia de acerto semântico, disponibilidade ou ausência de falhas de software.
-- Limites atuais: até 128 perguntas, 255 opções Choice, 10 níveis Score, state JSON de até 256 KiB. Sem porta pública nem comandos executáveis.
-
-## 3. Calibração e aceitação
-
-1. Separar treino / ajuste de calibração / teste final por entidade e tempo, sem vazamento de duplicatas.
-2. Ajustar temperatura positiva minimizando NLL em calibração. Avaliar Brier, NLL, reliability diagrams e ECE com intervalos de confiança; ECE isolado não basta.
-3. Para confidence, ajustar mapa de probabilidade de acerto (por exemplo isotônico) com predições out-of-fold e eventos da tabela; Score exige rótulos numéricos e tolerance fixada. Não chamar max(probabilities) ou 1−entropia de confiança empiricamente calibrada.
-4. Registrar modelo/tokenizador, domínio, hash da pergunta/legenda, método, dataset e métricas. O protocolo `Calibration.supports` deve conferir esse registro; o kernel não autentica a veracidade de um artefato fornecido pela aplicação.
-5. Novo modelo/rubrica/domínio invalida artefato. Drift ou cobertura insuficiente → abstenção/revisão. Calibração é propriedade estatística no domínio medido, não garantia universal.
-
-Sem artefato compatível, o SDK retorna `UNCALIBRATED` sem sequer chamar o modelo. **Nenhum calibrador real foi treinado nesta entrega.**
-
-## 4. MVP implementável agora
-
-| Etapa | Entrega / gate |
+| Arquivo | O que demonstra |
 |---|---|
-| 0 — entregue | kernel + exemplos + testes sintéticos; validar distribuição, erros, isolamento e concorrência |
-| 1 | selecionar dataset rotulado do domínio e encoder com licença adequada; treinar scorer numérico; medir baseline de regras |
-| 2 | ajustar artefatos de calibração e aceitar somente após teste independente; limiares definidos pelo risco e cobertura |
-| 3 | backend em batch, cache limitado de features por hash/versão/tenant; comparar batch 1/8/32, p50/p95, decisões/s, RAM e custo por 1k decisões |
-| 4 | importar SDK no fluxo Specter; inicialmente shadow/read-only; persistir apenas recibos autorizados, nunca gerar mensagens automáticas de decisão no feed |
+| `examples/01_triagem_suporte.py` | triagem completa: rubricas, fan-out especulativo, gate por confiança, índice composto |
+| `examples/02_calibracao.py` | ajustar artefato, ler tabela de confiabilidade, salvar/recarregar, ver acerto e erro confiante |
+| `examples/03_backend_proprio.py` | escrever seu backend com prefill único — **8,3× medido** contra o caminho sem lote |
+| `examples/04_servico_http.py` | ativar a superfície HTTP sem abrir porta, com erros tipados |
 
-Critérios: sucesso sempre tipado; falhas nunca viram decisões; pergunta isolada = mesma pergunta no batch (tolerância numérica declarada); validade estatística documentada; comparar custo/latência sob mesma carga. Testes locais sintéticos não certificam desempenho do modelo. Sem metas numéricas de latência antes de medir no hardware real.
+```bash
+python examples/03_backend_proprio.py
+# 32 perguntas, prefill de 10 ms
+# sem logits_batch :    353.5 ms   prefills = 32
+# com logits_batch :     42.5 ms   prefills = 1
+# ganho            :      8.3x
+```
 
-## 5. Atualização Specter consultada em 16/09/2026
+## 3. Arquitetura
 
-- ID Antigravity `60ca1d19-eaed-4970-bcd5-3f5b988ef578` não é thread Codex legível. Foram lidos seus artefatos locais, não alegado acesso integral à transcrição.
-- `implementation_plan.md` e `walkthrough.md` (15/09): console PowerShell, histórico TXT, remoção de pulses/polling. Os 97 testes e túnel nesses documentos são relatos anteriores, não testes reexecutados aqui.
-- Código atual lido: `specter_terminal.py` contém SessionLogger/TerminalHub; `specter_core_v3.py` só chama telemetria interativa em `/intel` e `/status`; inicialização não inicia `system_intel_background_loop`. Outros loops continuam presentes.
-- Artefato `scratch/sync_core_modules.py` de 16/09 parametriza caminhos de distribuição por `SPECTER_ROOT`, `SPECTER_GATEWAY_URL`, `SPECTER_CORE_DIR`, `SPECTER_WORK_DIR`. Script apenas lido, não executado; não comprova que a distribuição foi atualizada.
-- Integração proposta: biblioteca interna chamada sob demanda. Não ampliar o executor/federação nem usar mensagens externas como autorização. Core, banco, serviços e túneis não foram alterados.
+```
+state → snapshot canônico (1x) → validação → planejamento
+      → prefill único do estado
+      → logits por pergunta        ┌ lote: 1 chamada, N cabeças
+                                   └ fan-out: N chamadas, semáforo global
+      → temperatura versionada → softmax POR SEGMENTO (nunca global)
+      → projeção tipada → validação → Decision
+```
 
-## Fontes primárias
+- O mesmo snapshot vai para todas as perguntas. Nenhuma pergunta enxerga a
+  resposta de outra. O `id` escolhido pela aplicação **nunca** chega ao
+  backend (é substituído por `_`).
+- Concorrência de chamadas não é paralelismo de GPU. O backend precisa ser
+  cooperativo; adaptador bloqueante exige executor ou isolamento de
+  processo próprio. O contrato sozinho não impede estado interno
+  compartilhado.
+- Requisição inválida é rejeitada com `ValueError('INVALID_INPUT: ...')`
+  **antes** de qualquer inferência. Falha nunca vira decisão.
 
-- [TypeSafe: visão e primitives](https://docs.typesafe.ai/introduction): decisões tipadas e perguntas independentes. Nossa interface usa lista + id, não pretende compatibilidade binária com o SDK oficial.
-- [Jev/System One](https://typesafe.ai/blog/introducing-system-one-models-and-jev): arquitetura/sampler/RLCD são descritos pelo fabricante; os ganhos publicados não são benchmarks do Specter nem evidência de pesos disponíveis.
-- [Score](https://docs.typesafe.ai/primitives/score): legenda ordinal e média ponderada.
-- [Confidence](https://docs.typesafe.ai/confidence): no Jev, estatística derivada da distribuição; Noul não inclui confidence. Specter estende esse contrato conforme o pedido e define evento de acerto explícito.
-- [Guo et al., ICML 2017](https://proceedings.mlr.press/v70/guo17a.html): temperature scaling como método pós-treino; não garante calibração em qualquer domínio.
+### Módulos
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `numerics.py` | softmax estável, temperatura, simplex exato, esperança |
+| `canonical.py` | snapshot canônico, validação iterativa, fingerprint |
+| `types.py` | `Question`/`Decision`, limites, assinatura criptográfica |
+| `protocols.py` | `Backend`, `BatchBackend`, `Calibration` |
+| `engine.py` | planejamento, agendamento com deadline, projeção |
+| `calibration.py` | temperatura por NLL, isotônica PAV, métricas, artefato |
+| `policy.py` | gate por confiança, score composto, alta cardinalidade |
+| `backends/system_one.py` | baseline léxico local com prefill cacheado |
+| `backends/jev.py` | adaptador para a API System One da TypeSafe |
+| `service.py` / `http.py` | envelope, autenticação, rotas, cliente |
+| `cli.py` | `evaluate`, `capabilities`, `selftest`, `bench`, `calibrate` |
+
+## 4. O que mudou em relação a 0.2 — e por quê
+
+1. **Lote nativo (`BatchBackend`).** Se o backend expõe `logits_batch`, o
+   estado é codificado **uma vez** para N perguntas. É o ganho estrutural do
+   desenho System One; fan-out virou o caminho de compatibilidade.
+2. **Deduplicação por assinatura.** Perguntas de conteúdo idêntico (comuns
+   em fan-out especulativo) são computadas uma vez. Medido: **2,2× mais
+   rápido** em 64 perguntas repetidas.
+3. **Admissão consciente do deadline.** Trabalho nascido vencido não é
+   iniciado: devolve `TIMEOUT` sem custo de backend.
+4. **Gate de calibração por pergunta.** Uma pergunta descoberta pelo
+   artefato não derruba as outras.
+5. **Semáforo por (instância, event loop).** Recriado quando o loop muda —
+   elimina a classe de bug de semáforo compartilhado entre loops.
+6. **Calibração de verdade.** 0.2 definia o protocolo mas não entregava como
+   ajustar. Agora há temperatura por minimização de NLL, isotônica por PAV,
+   Brier/NLL/ECE/confiabilidade com bootstrap e artefato versionado que
+   **recusa** domínio, modelo ou pergunta fora do registro.
+7. **Validação antecipada.** Pergunta inválida falha na construção, não na
+   avaliação (mesmo `ValueError`, mesmo prefixo `INVALID_INPUT`).
+8. **Simplex exato.** A soma das probabilidades é 1.0 em ponto flutuante,
+   não "1.0 ± 1e-16".
+9. **Abstenção e recibos, opcionais.** `abstain_below` transforma confiança
+   baixa em `ABSTAINED`; `receipts=True` anexa hash auditável que vincula a
+   decisão ao estado sem expor o conteúdo do estado.
+10. **Políticas explícitas** (`ConfidenceGate`, `composite_score`,
+    `rank_then_choose` para mais de 255 opções) — os padrões que todo fluxo
+    real reimplementa errado.
+11. **Adaptador Jev.** O mesmo contrato tipado, com um modelo treinado real
+    por trás, quando o operador tem credencial.
+
+Detalhes de migração em `MIGRATION.md`. Medições em `BENCHMARKS.md`.
+
+## 5. Calibração
+
+Sem artefato compatível, o kernel devolve `UNCALIBRATED` **sem chamar o
+modelo**. O caminho para um artefato legítimo:
+
+```python
+from specter_decision.calibration import CalibrationArtifact
+
+artefato = CalibrationArtifact.fit(
+    registros,                    # [(Question, logits, verdade), ...]
+    domain="suporte-v1",
+    model_id=backend.model_id,
+    holdout=0.3,
+    bind_signatures=True,         # vincula às perguntas exatas
+)
+open("suporte-v1.json", "w").write(artefato.to_json())
+print(artefato.metrics)           # nll, brier, ece, acurácia com IC95
+```
+
+Regras que o código não tem como impor por você:
+
+1. Separe treino / calibração / teste **por entidade e por tempo**, sem
+   duplicatas vazando entre os conjuntos.
+2. Avalie Brier, NLL, diagramas de confiabilidade e ECE **com incerteza**.
+   ECE isolado não basta.
+3. Modelo novo, rubrica nova ou domínio novo **invalidam** o artefato.
+4. Drift ou cobertura insuficiente → abstenção ou revisão humana.
+5. Calibração é propriedade estatística no domínio medido, não garantia
+   universal. O kernel não autentica a veracidade de um artefato fornecido
+   pela aplicação.
+
+## 6. Limites e postura de segurança
+
+- 128 perguntas por requisição, 255 opções em `choice`, 10 níveis em
+  `score`, 256 KiB de estado, profundidade 32.
+- JSON com NaN/Infinity, chave não-string, ciclo, tipo não serializável ou
+  cardinalidade inválida é **rejeitado**.
+- Sem geração textual. Rótulos vêm da entrada; erros são enums
+  (`UNCALIBRATED`, `TIMEOUT`, `BACKEND_ERROR`, `INVALID_OUTPUT`,
+  `ABSTAINED`).
+- `status=ok` no envelope significa requisição processada — **não** que
+  todas as perguntas decidiram.
+- A decisão não concede autorização. O engine não executa ações, não importa
+  código recebido e não envia mensagens.
+- Nenhum conteúdo de estado é registrado em log; só fingerprints.
+- Exposição externa exige proxy TLS com allowlist das rotas de decisão,
+  autenticação e rate limit **no proxy**. Não publique o Core inteiro para
+  lançar esta API.
+
+## 7. Gates obrigatórios antes de produção
+
+1. Modelo numérico com licença e dataset definidos e avaliação semântica
+   real (o backend local **não** atende a este gate).
+2. Calibração fora do treino, artefato vinculado a hash de pergunta, modelo
+   e domínio; Brier/NLL/ECE com incerteza, drift e política de abstenção.
+3. Teste de carga no hardware real: p50/p95, erro, memória, custo e
+   concorrência. Fixtures não medem inteligência nem latência de modelo.
+4. Revisão do backend, do transporte TLS e dos segredos; rotação de token e
+   isolamento entre clientes.
+5. Ativação em janela de manutenção, smoke test autenticado, rollback em
+   caso de regressão.
+6. Licença de distribuição e destino de publicação definidos.
+
+`production_ready` permanece `false` nesta entrega, mesmo com fábrica
+registrada. Não prometemos perfeição estrutural, confiança universal nem
+desempenho equivalente ao Jev.
+
+## 8. Fontes
+
+- [TypeSafe: introdução e primitivas](https://docs.typesafe.ai/introduction)
+  — decisões tipadas e perguntas independentes. A interface daqui usa lista
+  + id e não pretende compatibilidade binária com o SDK oficial.
+- [Jev / System One](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
+  — arquitetura, amostrador paralelo e RLCD são descritos pelo fabricante;
+  os ganhos publicados não são benchmarks deste projeto nem evidência de
+  pesos disponíveis.
+- [Confiança](https://docs.typesafe.ai/confidence) — no Jev é estatística
+  derivada da distribuição, e `noul` não inclui confiança. O Specter estende
+  esse contrato e define o evento de acerto explicitamente.
+- [Guo et al., ICML 2017](https://proceedings.mlr.press/v70/guo17a.html) —
+  temperature scaling como método pós-treino; não garante calibração em
+  qualquer domínio.
+- [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html) — contrato do
+  transporte.

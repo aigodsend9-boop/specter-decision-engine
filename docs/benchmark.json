@@ -1,0 +1,114 @@
+{
+  "python": "3.12.3",
+  "platform": "Linux-6.18.44-fc-v33-x86_64-with-glibc2.39",
+  "iterations": 300,
+  "state_bytes": 551,
+  "note": "backend heurístico/nulo: mede engenharia, não inteligência",
+  "kernel_overhead": {
+    "1": {
+      "p50_ms": 0.0292,
+      "p95_ms": 0.0488,
+      "p99_ms": 0.0647,
+      "decisions_per_s": 31234.9
+    },
+    "8": {
+      "p50_ms": 0.0711,
+      "p95_ms": 0.0927,
+      "p99_ms": 0.1058,
+      "decisions_per_s": 107934.0
+    },
+    "32": {
+      "p50_ms": 0.1705,
+      "p95_ms": 0.2159,
+      "p99_ms": 0.2946,
+      "decisions_per_s": 179963.4
+    },
+    "128": {
+      "p50_ms": 0.5498,
+      "p95_ms": 0.6013,
+      "p99_ms": 0.6789,
+      "decisions_per_s": 231293.4
+    }
+  },
+  "batch_vs_fanout": {
+    "1": {
+      "batch": {
+        "p50_ms": 0.0405,
+        "p95_ms": 0.0618,
+        "p99_ms": 0.0812,
+        "decisions_per_s": 23234.1
+      },
+      "fanout": {
+        "p50_ms": 0.0614,
+        "p95_ms": 0.0928,
+        "p99_ms": 0.1143,
+        "decisions_per_s": 15295.9
+      },
+      "speedup_p50": 1.52
+    },
+    "8": {
+      "batch": {
+        "p50_ms": 0.0926,
+        "p95_ms": 0.1262,
+        "p99_ms": 0.1408,
+        "decisions_per_s": 82416.3
+      },
+      "fanout": {
+        "p50_ms": 0.1319,
+        "p95_ms": 0.1624,
+        "p99_ms": 0.1776,
+        "decisions_per_s": 58356.6
+      },
+      "speedup_p50": 1.42
+    },
+    "32": {
+      "batch": {
+        "p50_ms": 0.191,
+        "p95_ms": 0.2875,
+        "p99_ms": 0.3428,
+        "decisions_per_s": 154927.4
+      },
+      "fanout": {
+        "p50_ms": 0.2295,
+        "p95_ms": 0.268,
+        "p99_ms": 0.2837,
+        "decisions_per_s": 134922.3
+      },
+      "speedup_p50": 1.2
+    },
+    "128": {
+      "batch": {
+        "p50_ms": 0.5769,
+        "p95_ms": 0.7368,
+        "p99_ms": 0.8762,
+        "decisions_per_s": 216616.9
+      },
+      "fanout": {
+        "p50_ms": 0.6151,
+        "p95_ms": 0.6625,
+        "p99_ms": 0.8425,
+        "decisions_per_s": 206268.7
+      },
+      "speedup_p50": 1.07
+    }
+  },
+  "deduplication": {
+    "repeated_64": {
+      "p50_ms": 0.2418,
+      "p95_ms": 0.2774,
+      "p99_ms": 0.3195,
+      "decisions_per_s": 258194.5
+    },
+    "distinct_64": {
+      "p50_ms": 0.5247,
+      "p95_ms": 0.5751,
+      "p99_ms": 0.6156,
+      "decisions_per_s": 121154.4
+    }
+  },
+  "memory": {
+    "traced_current_kib": 29.1,
+    "traced_peak_kib": 129.0,
+    "process_max_rss_mib": 25.4
+  }
+}

@@ -1,207 +1,435 @@
-"""Typed decision kernel. No text generation, network, model weights or side effects."""
-# Project author: Guilherme Peralta Novaes. Developed with AI assistance.
+"""Kernel de decisão: estado -> snapshot -> amostrador paralelo -> projeção tipada.
+
+Pipeline (idêntico ao desenho 0.1, com o caminho quente reescrito):
+
+    state -> snapshot canônico -> validação -> planejamento
+          -> [prefill único] -> logits por pergunta (lote ou fan-out)
+          -> temperatura versionada -> softmax por segmento
+          -> projeção tipada -> validação -> Decision
+
+O que mudou em relação a 0.2 (e por quê):
+
+* **Lote nativo.** Se o backend expõe `logits_batch`, o kernel faz UMA
+  chamada com todas as perguntas: o estado é codificado uma vez só. Esse é
+  o ganho estrutural do desenho System One; fan-out por pergunta vira o
+  caminho de compatibilidade.
+* **Deduplicação por assinatura.** Perguntas com conteúdo idêntico (comum
+  em fan-out especulativo) são computadas uma vez e projetadas N vezes.
+* **Admissão consciente do deadline.** Trabalho que já nasceu vencido não
+  é iniciado; o resultado é TIMEOUT sem custo de backend.
+* **Gate de calibração por pergunta.** Uma pergunta sem artefato compatível
+  retorna UNCALIBRATED sem impedir as demais de decidir.
+* **Semáforo por (instância, event loop).** Recriado quando o loop muda,
+  eliminando a classe de bugs de semáforo compartilhado entre loops.
+* **Projeção sem alocação supérflua** e soma com `math.fsum`.
+
+O kernel continua não gerando texto, não executando ações, não fazendo
+rede e não registrando o conteúdo do estado.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
-import math
-from dataclasses import asdict, dataclass
-from typing import Literal, Protocol, Sequence, TypedDict, cast
+from typing import Any, Iterable, Sequence
 
-Kind = Literal['noul', 'choice', 'score']
-Error = Literal['INVALID_INPUT', 'UNCALIBRATED', 'TIMEOUT', 'BACKEND_ERROR', 'INVALID_OUTPUT']
+from .canonical import Snapshot, canonical_snapshot, fingerprint_of
+from .numerics import argmax, expectation, softmax, validate_simplex
+from .protocols import Backend, Calibration
+from .types import (
+    DEFAULT_LIMITS,
+    Decision,
+    ErrorCode,
+    Limits,
+    Question,
+)
 
+__all__ = ["SpecterDecisionEngine"]
 
-@dataclass(frozen=True)
-class Question:
-    id: str
-    type: Kind
-    instructions: str
-    criteria: tuple[str, ...] = ()
-    tolerance: float = 0.5
-
-    @property
-    def labels(self) -> tuple[str, ...]:
-        return ('false', 'true') if self.type == 'noul' else self.criteria
-
-    @property
-    def signature(self) -> str:
-        data = asdict(self)
-        del data['id']  # IDs route results; they must not affect predictions.
-        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+_ENGINE_CONTRACT = "specter-decision/0.3"
 
 
-class _Success(TypedDict):
-    id: str
-    status: Literal['ok']
-    probabilities: list[float]
-    confidence: float
-    legend: list[str]
-    error: None
+def _reject(reason: str) -> None:
+    raise ValueError(f"INVALID_INPUT: {reason}")
 
 
-class NoulDecision(_Success):
-    type: Literal['noul']
-    value: float
+class _Plan:
+    """Plano de execução de uma requisição (estrutura interna, não exportada)."""
 
+    __slots__ = ("questions", "snapshot", "groups", "order", "results", "gated")
 
-class ChoiceDecision(_Success):
-    type: Literal['choice']
-    value: str
-
-
-class ScoreDecision(_Success):
-    type: Literal['score']
-    value: float
-
-
-class ErrorDecision(TypedDict):
-    id: str
-    type: Kind
-    status: Literal['error']
-    value: None
-    probabilities: None
-    confidence: None
-    legend: list[str]
-    error: Error
-
-
-Decision = NoulDecision | ChoiceDecision | ScoreDecision | ErrorDecision
-
-
-class Backend(Protocol):
-    """Trusted non-generative adapter; must honor cancellation and question isolation."""
-    model_id: str
-
-    async def logits(self, state_json: str, question: Question) -> Sequence[float]: ...
-
-
-class Calibration(Protocol):
-    """Inject only an independently validated, versioned artifact; not model self-report."""
-    def supports(self, model_id: str, domain: str, question_signature: str) -> bool: ...
-
-    def temperature(self, question_signature: str) -> float: ...
-
-    def confidence(self, question: Question, probabilities: tuple[float, ...],
-                   value: float | str) -> float: ...
-
-
-def _number(value: object) -> bool:
-    try:
-        return type(value) in (int, float) and math.isfinite(value)
-    except OverflowError:
-        return False
-
-
-def _valid_question(q: object) -> bool:
-    return (
-        isinstance(q, Question) and type(q.id) is str and 1 <= len(q.id) <= 128
-        and type(q.instructions) is str and 1 <= len(q.instructions) <= 8192
-        and bool(q.instructions.strip())
-        and q.type in ('noul', 'choice', 'score')
-        and type(q.criteria) is tuple
-        and all(type(x) is str and 1 <= len(x) <= 4096 and bool(x.strip()) for x in q.criteria)
-        and len(set(q.criteria)) == len(q.criteria)
-        and ((q.type == 'noul' and not q.criteria)
-             or (q.type == 'choice' and 2 <= len(q.criteria) <= 255)
-             or (q.type == 'score' and 2 <= len(q.criteria) <= 10))
-        and _number(q.tolerance) and q.tolerance > 0
-    )
-
-
-def _error(q: Question, code: Error) -> Decision:
-    return dict(id=q.id, type=q.type, status='error', value=None,
-                probabilities=None, confidence=None, legend=list(q.labels), error=code)
-
-
-def _json_value(v: object) -> bool:
-    if v is None or type(v) in (str, bool):
-        return True
-    if type(v) in (int, float):
-        return _number(v)
-    if type(v) is list:
-        return all(_json_value(x) for x in v)
-    if type(v) is dict:
-        return all(type(k) is str and _json_value(x) for k, x in v.items())
-    return False
-
-
-def validate_input(state: str | dict, questions: Sequence[Question]) -> tuple[str, tuple[Question, ...]]:
-    try:
-        qs = tuple(questions)
-        valid = (type(state) in (str, dict) and _json_value(state)
-                 and 1 <= len(qs) <= 128 and all(_valid_question(q) for q in qs)
-                 and len({q.id for q in qs}) == len(qs))
-        if not valid:
-            raise ValueError('INVALID_INPUT')
-        snapshot = json.dumps(state, sort_keys=True, ensure_ascii=False, allow_nan=False)
-        total = len(snapshot.encode('utf-8')) + sum(
-            len(json.dumps(asdict(q), ensure_ascii=False).encode('utf-8')) for q in qs)
-        if total > 262144:
-            raise ValueError('INVALID_INPUT')
-        return snapshot, qs
-    except (TypeError, ValueError, RecursionError, OverflowError):
-        raise ValueError('INVALID_INPUT') from None
+    def __init__(self, questions: tuple[Question, ...], snapshot: Snapshot) -> None:
+        self.questions = questions
+        self.snapshot = snapshot
+        self.groups: dict[str, list[int]] = {}
+        self.order: list[Question] = []
+        self.results: dict[str, Any] = {}
+        self.gated: set[int] = set()
 
 
 class SpecterDecisionEngine:
-    def __init__(self, backend: Backend, calibration: Calibration | None = None,
-                 *, domain: str, concurrency: int = 8, timeout: float = 2.0):
-        if type(concurrency) is not int or not 1 <= concurrency <= 128:
-            raise ValueError('INVALID_INPUT')
-        if not _number(timeout) or not 0 < timeout <= 30 or type(domain) is not str or not 1 <= len(domain) <= 128:
-            raise ValueError('INVALID_INPUT')
-        self.backend, self.calibration, self.domain = backend, calibration, domain
+    """Avalia perguntas independentes sobre um estado imutável.
+
+    A instância é reutilizável e segura para chamadas concorrentes dentro do
+    mesmo event loop: o limite de concorrência é global por instância.
+
+    Attributes:
+        backend: implementação de `Backend` (e opcionalmente `BatchBackend`).
+        calibration: artefato de calibração ou None (tudo UNCALIBRATED).
+        domain: domínio lógico vinculado ao artefato.
+        concurrency: teto de chamadas simultâneas ao backend.
+        timeout: deadline absoluto por requisição, em segundos (None desliga).
+        limits: limites duros de validação.
+        abstain_below: se definido, decisões com confiança menor viram
+            ABSTAINED em vez de valor (política de abstenção explícita).
+        receipts: inclui `receipt` (hash auditável) em cada decisão.
+    """
+
+    __slots__ = (
+        "backend",
+        "calibration",
+        "domain",
+        "concurrency",
+        "timeout",
+        "limits",
+        "abstain_below",
+        "receipts",
+        "_semaphore",
+        "_semaphore_loop",
+        "_batch",
+        "_counters",
+    )
+
+    def __init__(
+        self,
+        backend: Backend,
+        calibration: Calibration | None = None,
+        *,
+        domain: str = "default",
+        concurrency: int = 8,
+        timeout: float | None = 2.0,
+        limits: Limits = DEFAULT_LIMITS,
+        abstain_below: float | None = None,
+        receipts: bool = False,
+    ) -> None:
+        if backend is None:
+            raise ValueError("backend é obrigatório")
+        if concurrency < 1:
+            raise ValueError("concurrency deve ser >= 1")
+        if timeout is not None and (timeout <= 0 or timeout != timeout):
+            raise ValueError("timeout deve ser > 0 ou None")
+        if abstain_below is not None and not 0.0 <= abstain_below <= 1.0:
+            raise ValueError("abstain_below deve estar em [0,1]")
+        self.backend = backend
+        self.calibration = calibration
+        self.domain = domain
+        self.concurrency = concurrency
         self.timeout = timeout
-        self._slots = asyncio.Semaphore(concurrency)
+        self.limits = limits
+        self.abstain_below = abstain_below
+        self.receipts = receipts
+        self._semaphore: asyncio.Semaphore | None = None
+        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
+        self._batch = callable(getattr(backend, "logits_batch", None))
+        self._counters = {"requests": 0, "questions": 0, "deduplicated": 0, "batched": 0}
 
-    async def decide(self, state: str | dict, questions: Sequence[Question]) -> list[Decision]:
-        """Invalid requests raise a fixed error code; accepted requests yield typed outcomes.
+    # ------------------------------------------------------------------ API
+    async def decide(
+        self, state: Any, questions: Iterable[Question]
+    ) -> list[Decision]:
+        """Avalia todas as perguntas sobre o mesmo snapshot do estado.
 
-        One immutable JSON snapshot, independent question calls, stable result order.
-        A semaphore bounds concurrency across calls on this engine's event loop.
+        Args:
+            state: estrutura JSON serializável (str, dict, list, número...).
+            questions: perguntas tipadas, ids únicos, no máximo `max_questions`.
+
+        Returns:
+            Lista de decisões na ordem original das perguntas.
+
+        Raises:
+            ValueError: prefixada com INVALID_INPUT quando a requisição é
+                inválida. Requisição inválida nunca chega ao backend.
+            asyncio.CancelledError: propagada do chamador, cancelando o
+                trabalho em voo.
         """
-        snapshot, qs = validate_input(state, questions)
-        return list(await asyncio.gather(*(self._timed(snapshot, q) for q in qs)))
+        plan = self._plan(state, questions)
+        self._counters["requests"] += 1
+        self._counters["questions"] += len(plan.questions)
+        if plan.order:
+            await self._execute(plan)
+        return [
+            self._project(index, question, plan)
+            for index, question in enumerate(plan.questions)
+        ]
 
-    async def _timed(self, snapshot: str, q: Question) -> Decision:
+    def decide_sync(self, state: Any, questions: Iterable[Question]) -> list[Decision]:
+        """Versão síncrona para aplicações não-async.
+
+        Raises:
+            RuntimeError: se chamada de dentro de um event loop ativo.
+        """
         try:
-            # Deadline includes queueing, not just provider time.
-            return await asyncio.wait_for(self._one(snapshot, q), timeout=self.timeout)
-        except TimeoutError:
-            return _error(q, 'TIMEOUT')
-        except Exception:
-            return _error(q, 'BACKEND_ERROR')
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.decide(state, questions))
+        raise RuntimeError("decide_sync não pode ser usado dentro de um event loop")
 
-    async def _one(self, snapshot: str, q: Question) -> Decision:
-        c = self.calibration
-        if c is None or not c.supports(self.backend.model_id, self.domain, q.signature):
-            return _error(q, 'UNCALIBRATED')
-        async with self._slots:
-            # Do not send the routing ID or any sibling question to the model.
-            model_q = Question('_', q.type, q.instructions, q.criteria, q.tolerance)
-            logits = tuple(await self.backend.logits(snapshot, model_q))
-            t = c.temperature(q.signature)
-            if (len(logits) != len(q.labels) or not all(_number(x) for x in logits)
-                    or not _number(t) or t <= 0):
-                return _error(q, 'INVALID_OUTPUT')
-            peak = max(logits)
-            weights = tuple(math.exp((x - peak) / t) for x in logits)
-            total = math.fsum(weights)
-            ps = tuple(x / total for x in weights)
-            if not all(_number(p) and 0 <= p <= 1 for p in ps):
-                return _error(q, 'INVALID_OUTPUT')
-            value: float | str
-            if q.type == 'noul':
-                value = ps[1]
-            elif q.type == 'choice':
-                value = q.criteria[max(range(len(ps)), key=ps.__getitem__)]
+    def capabilities(self) -> dict[str, Any]:
+        """Descreve a configuração corrente sem alegar prontidão produtiva."""
+        return {
+            "contract": _ENGINE_CONTRACT,
+            "domain": self.domain,
+            "model_id": getattr(self.backend, "model_id", "unknown"),
+            "batch_backend": self._batch,
+            "calibrated": self.calibration is not None,
+            "concurrency": self.concurrency,
+            "timeout_s": self.timeout,
+            "abstain_below": self.abstain_below,
+            "limits": {
+                "max_questions": self.limits.max_questions,
+                "max_choice_options": self.limits.max_choice_options,
+                "max_score_levels": self.limits.max_score_levels,
+                "max_state_bytes": self.limits.max_state_bytes,
+            },
+            "question_types": ["noul", "choice", "score"],
+            "error_codes": sorted(ErrorCode.ALL),
+            "production_ready": False,
+            "counters": dict(self._counters),
+        }
+
+    # ------------------------------------------------------------ planejamento
+    def _plan(self, state: Any, questions: Iterable[Question]) -> _Plan:
+        items = tuple(questions)
+        if not items:
+            _reject("nenhuma pergunta")
+        if len(items) > self.limits.max_questions:
+            _reject(f"{len(items)} perguntas acima do limite {self.limits.max_questions}")
+        seen_ids: set[str] = set()
+        for question in items:
+            if not isinstance(question, Question):
+                _reject("cada pergunta deve ser uma instância de Question")
+            if question.id in seen_ids:
+                _reject(f"id duplicado: {question.id!r}")
+            seen_ids.add(question.id)
+
+        snapshot = canonical_snapshot(
+            state,
+            max_bytes=self.limits.max_state_bytes,
+            max_depth=self.limits.max_state_depth,
+        )
+        plan = _Plan(items, snapshot)
+
+        model_id = getattr(self.backend, "model_id", "unknown")
+        for index, question in enumerate(items):
+            if not self._supports(question, model_id):
+                plan.gated.add(index)
+                continue
+            bucket = plan.groups.get(question.signature)
+            if bucket is None:
+                plan.groups[question.signature] = [index]
+                plan.order.append(question.anonymous())
             else:
-                value = math.fsum(i * p for i, p in enumerate(ps))
-            confidence = c.confidence(q, ps, value)
-            if not _number(confidence) or not 0 <= confidence <= 1:
-                return _error(q, 'INVALID_OUTPUT')
-            return cast(Decision, dict(id=q.id, type=q.type, status='ok', value=value,
-                        probabilities=list(ps), confidence=confidence,
-                        legend=list(q.labels), error=None))
+                bucket.append(index)
+                self._counters["deduplicated"] += 1
+        return plan
+
+    def _supports(self, question: Question, model_id: str) -> bool:
+        """Gate de calibração; qualquer exceção do artefato vira UNCALIBRATED."""
+        if self.calibration is None:
+            return False
+        try:
+            return bool(self.calibration.supports(self.domain, model_id, question))
+        except Exception:
+            return False
+
+    # -------------------------------------------------------------- execução
+    async def _execute(self, plan: _Plan) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = None if self.timeout is None else loop.time() + self.timeout
+        signatures = list(plan.groups.keys())
+        if self._batch:
+            self._counters["batched"] += 1
+            await self._execute_batch(plan, signatures, loop, deadline)
+            return
+        await self._execute_fanout(plan, signatures, loop, deadline)
+
+    async def _execute_batch(
+        self,
+        plan: _Plan,
+        signatures: list[str],
+        loop: asyncio.AbstractEventLoop,
+        deadline: float | None,
+    ) -> None:
+        remaining = None if deadline is None else deadline - loop.time()
+        if remaining is not None and remaining <= 0:
+            self._fill(plan, signatures, ErrorCode.TIMEOUT)
+            return
+        call = self.backend.logits_batch(plan.snapshot.json, tuple(plan.order))
+        try:
+            rows = await (
+                call if remaining is None else asyncio.wait_for(call, remaining)
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            self._fill(plan, signatures, ErrorCode.TIMEOUT)
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._fill(plan, signatures, ErrorCode.BACKEND_ERROR)
+            return
+        if not isinstance(rows, (list, tuple)) or len(rows) != len(signatures):
+            self._fill(plan, signatures, ErrorCode.INVALID_OUTPUT)
+            return
+        for signature, row in zip(signatures, rows):
+            plan.results[signature] = row
+
+    async def _execute_fanout(
+        self,
+        plan: _Plan,
+        signatures: list[str],
+        loop: asyncio.AbstractEventLoop,
+        deadline: float | None,
+    ) -> None:
+        semaphore = self._acquire_semaphore(loop)
+        tasks = [
+            loop.create_task(self._call_one(plan.snapshot.json, question, semaphore))
+            for question in plan.order
+        ]
+        remaining = None if deadline is None else max(0.0, deadline - loop.time())
+        try:
+            done, pending = await asyncio.wait(tasks, timeout=remaining)
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        if pending:
+            for task in pending:
+                task.cancel()
+            # Aguardar as tarefas canceladas garante que os `finally` do
+            # backend rodem antes de devolvermos o controle ao chamador.
+            await asyncio.gather(*pending, return_exceptions=True)
+        for signature, task in zip(signatures, tasks):
+            if task in pending:
+                plan.results[signature] = ErrorCode.TIMEOUT
+                continue
+            try:
+                error = task.exception()
+            except asyncio.CancelledError:
+                plan.results[signature] = ErrorCode.TIMEOUT
+                continue
+            if error is None:
+                plan.results[signature] = task.result()
+            elif isinstance(error, (TimeoutError, asyncio.TimeoutError)):
+                plan.results[signature] = ErrorCode.TIMEOUT
+            else:
+                plan.results[signature] = ErrorCode.BACKEND_ERROR
+
+    async def _call_one(
+        self, state_json: str, question: Question, semaphore: asyncio.Semaphore | None
+    ) -> Sequence[float]:
+        if semaphore is None:
+            return await self.backend.logits(state_json, question)
+        async with semaphore:
+            return await self.backend.logits(state_json, question)
+
+    def _acquire_semaphore(
+        self, loop: asyncio.AbstractEventLoop
+    ) -> asyncio.Semaphore | None:
+        """Semáforo global por instância, recriado se o event loop mudou."""
+        if self._semaphore is None or self._semaphore_loop is not loop:
+            self._semaphore = asyncio.Semaphore(self.concurrency)
+            self._semaphore_loop = loop
+        return self._semaphore
+
+    @staticmethod
+    def _fill(plan: _Plan, signatures: list[str], code: str) -> None:
+        for signature in signatures:
+            plan.results[signature] = code
+
+    # -------------------------------------------------------------- projeção
+    def _project(self, index: int, question: Question, plan: _Plan) -> Decision:
+        if index in plan.gated:
+            return self._error(question, ErrorCode.UNCALIBRATED)
+        raw = plan.results.get(question.signature)
+        if isinstance(raw, str):
+            return self._error(question, raw)
+        if raw is None:
+            return self._error(question, ErrorCode.BACKEND_ERROR)
+
+        cardinality = question.cardinality
+        if not isinstance(raw, (list, tuple)) or len(raw) != cardinality:
+            return self._error(question, ErrorCode.INVALID_OUTPUT)
+
+        try:
+            temperature = float(self.calibration.temperature(question))  # type: ignore[union-attr]
+            probabilities = softmax(raw, temperature)
+        except Exception:
+            return self._error(question, ErrorCode.INVALID_OUTPUT)
+        if not validate_simplex(probabilities, size=cardinality):
+            return self._error(question, ErrorCode.INVALID_OUTPUT)
+
+        kind = question.type
+        if kind == "noul":
+            value: Any = probabilities[1]
+        elif kind == "choice":
+            value = question.labels[argmax(probabilities)]
+        else:
+            value = expectation(probabilities)
+            if not 0.0 <= value <= cardinality - 1:
+                return self._error(question, ErrorCode.INVALID_OUTPUT)
+
+        try:
+            confidence = float(
+                self.calibration.confidence(question, probabilities, value)  # type: ignore[union-attr]
+            )
+        except Exception:
+            return self._error(question, ErrorCode.INVALID_OUTPUT)
+        if not 0.0 <= confidence <= 1.0 or confidence != confidence:
+            return self._error(question, ErrorCode.INVALID_OUTPUT)
+        if self.abstain_below is not None and confidence < self.abstain_below:
+            return self._error(question, ErrorCode.ABSTAINED)
+
+        decision: Decision = {
+            "id": question.id,
+            "type": kind,
+            "status": "ok",
+            "value": value,
+            "probabilities": probabilities,
+            "confidence": confidence,
+            "legend": list(question.labels),
+            "error": None,
+        }
+        if self.receipts:
+            decision["receipt"] = self._receipt(decision, plan.snapshot)  # type: ignore[typeddict-unknown-key]
+        return decision
+
+    def _error(self, question: Question, code: str) -> Decision:
+        decision: Decision = {
+            "id": question.id,
+            "type": question.type,
+            "status": "error",
+            "value": None,
+            "probabilities": None,
+            "confidence": None,
+            "legend": list(question.labels),
+            "error": code,
+        }
+        return decision
+
+    @staticmethod
+    def _receipt(decision: Decision, snapshot: Snapshot) -> str:
+        """Hash auditável da decisão, sem expor o conteúdo do estado."""
+        payload = json.dumps(
+            {
+                "state": snapshot.fingerprint,
+                "id": decision["id"],
+                "type": decision["type"],
+                "value": decision["value"],
+                "probabilities": decision["probabilities"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return fingerprint_of(payload, prefix="specter-receipt/1")
