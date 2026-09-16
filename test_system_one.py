@@ -73,7 +73,7 @@ class SystemOneTests(unittest.IsolatedAsyncioTestCase):
         import specter_decision as sd
         self.assertTrue(hasattr(sd, "SystemOneLocalBackend"))
         self.assertTrue(hasattr(sd, "SimpleCalibration"))
-        self.assertEqual(sd.__version__, "0.2.0rc4")
+        self.assertEqual(sd.__version__, "0.2.0rc5")
 
 
 if __name__ == "__main__":

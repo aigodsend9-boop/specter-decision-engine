@@ -1,17 +1,32 @@
-"""Specter System-One Local — lean core.
+"""Specter System-One Local v3 — bit-mask lexicon + amortized prefill cache.
 
-Control flow (public System-One idea, no vendor weights):
-  state → prefill once → constrained field logits → engine softmax
+Cache theory
+------------
+Let C_prefill be cost of building Prefill(state), C_head cost of one field head.
+Without cache, Q questions cost Q * (C_prefill + C_head).
+With content-addressed cache keyed by hash(state):
 
-TempleOS-minded constraints applied here:
-  - fixed tables, no dynamic registries
-  - one pass over tokens
-  - slots, no incidental allocations on the hot path
-  - views are affine transforms of a single base score, not three full rescores
+    cost = C_prefill + Q * C_head
+
+Amortized per question: C_prefill/Q + C_head.
+At Q=28, prefill is ~3.6% of the no-cache prefill bill.
+
+Bit-level lexicon
+-----------------
+Each known word maps to:
+  bank_mask : uint7 bitfield — membership in cue banks B_0..B_6
+  flags     : neg / intens / soft
+  factor    : intensity multiplier
+
+One open-dict probe per token updates all bank counts via bit tests.
+Unknown tokens only increment n_tok (O(1) reject).
+
+Optional C core (libprefill.so) accelerates prefill when present.
 """
 from __future__ import annotations
 
 import math
+import os
 import re
 from typing import Sequence
 
@@ -19,139 +34,196 @@ from specter_decision.engine import Question
 
 _TOKEN = re.compile(r"[a-z0-9']+")
 
-# Fixed cue tables (order is ABI for Prefill.hits indices).
-_CUE_NAMES = ("urgency", "frustration", "refund", "billing", "technical", "sales", "returns")
-_CUE_SETS: tuple[frozenset[str], ...] = (
-    frozenset("urgent asap immediately critical emergency now losing blocked outage down cannot can't failing deadline today stuck".split()),
-    frozenset("frustrated angry ridiculous unacceptable terrible hate worst furious annoyed complaint useless awful joke".split()),
-    frozenset("refund chargeback money double charged twice overcharged".split()),
-    frozenset("invoice payment charge subscription billing card stripe paypal receipt fee price".split()),
-    frozenset("bug error crash api integration connect connection timeout fail failing stack exception login auth oauth webhook sdk account".split()),
-    frozenset("pricing plan upgrade demo quote enterprise trial discount seat".split()),
-    frozenset("return returns exchange shipping package damaged".split()),
-)
-_N_CUES = len(_CUE_SETS)
+# bank index ABI
+_N_CUES = 7
+# word -> (bank_mask:int, neg:bool, factor:float)
+_LEX: dict[str, tuple[int, bool, float]] = {}
 
-_NEG = frozenset("not no never n't without hardly neither nor".split())
-_INT = {"very": 1.35, "extremely": 1.6, "really": 1.25, "so": 1.15, "highly": 1.35,
-        "completely": 1.45, "totally": 1.35, "absolutely": 1.45}
-_SOFT = {"maybe": 0.72, "perhaps": 0.72, "somewhat": 0.78, "slightly": 0.72}
 
-# label-name → cue index for choice heads (O(1))
+def _lex_add(words: str, bit: int) -> None:
+    for w in words.split():
+        mask, neg, fac = _LEX.get(w, (0, False, 1.0))
+        _LEX[w] = (mask | (1 << bit), neg, fac)
+
+
+def _lex_flag(words: str, *, neg: bool = False, factor: float = 1.0) -> None:
+    for w in words.split():
+        mask, n, f = _LEX.get(w, (0, False, 1.0))
+        _LEX[w] = (mask, n or neg, factor if factor != 1.0 else f)
+
+
+_lex_add("urgent asap immediately critical emergency now losing blocked outage down cannot failing deadline today stuck", 0)
+_lex_add("frustrated angry ridiculous unacceptable terrible hate worst furious annoyed complaint useless awful joke", 1)
+_lex_add("refund chargeback money double charged twice overcharged", 2)
+_lex_add("invoice payment charge subscription billing card stripe paypal receipt fee price", 3)
+_lex_add("bug error crash api integration connect connection timeout fail failing stack exception login auth oauth webhook sdk account", 4)
+_lex_add("pricing plan upgrade demo quote enterprise trial discount seat", 5)
+_lex_add("return returns exchange shipping package damaged", 6)
+_lex_flag("not no never without hardly neither nor", neg=True)
+_lex_flag("very", factor=1.35)
+_lex_flag("extremely", factor=1.60)
+_lex_flag("really", factor=1.25)
+_lex_flag("so", factor=1.15)
+_lex_flag("highly", factor=1.35)
+_lex_flag("completely", factor=1.45)
+_lex_flag("totally", factor=1.35)
+_lex_flag("absolutely", factor=1.45)
+_lex_flag("maybe", factor=0.72)
+_lex_flag("perhaps", factor=0.72)
+_lex_flag("somewhat", factor=0.78)
+_lex_flag("slightly", factor=0.72)
+
 _LABEL_CUE: dict[str, int] = {
-    "urgent": 0, "urgency": 0,
-    "frustration": 1, "frustrated": 1, "angry": 1,
-    "refund": 2, "refunds": 2,
-    "billing": 3, "finance": 3, "payments": 3, "payment": 3,
+    "urgent": 0, "urgency": 0, "frustration": 1, "frustrated": 1, "angry": 1,
+    "refund": 2, "refunds": 2, "billing": 3, "finance": 3, "payments": 3, "payment": 3,
     "technical": 4, "engineering": 4, "tech": 4, "support": 4,
-    "sales": 5, "commercial": 5, "account": 5,
-    "returns": 6, "return": 6, "shipping": 6,
+    "sales": 5, "commercial": 5, "account": 5, "returns": 6, "return": 6, "shipping": 6,
 }
+
+# optional native
+_C_PREFILL = None
+try:
+    import ctypes
+    from ctypes import c_char_p, c_size_t, c_uint32, c_int, c_float, Structure, POINTER
+
+    class _PrefillOut(Structure):
+        _fields_ = [
+            ("key", c_uint32),
+            ("n_tok", c_int),
+            ("intensity", c_float),
+            ("neg_density", c_float),
+            ("hits", c_float * _N_CUES),
+        ]
+
+    for path in (
+        os.environ.get("SPECTER_PREFILL_SO"),
+        os.path.join(os.path.dirname(__file__), "libprefill.so"),
+        "/tmp/libprefill.so",
+        "/home/workdir/artifacts/native/libprefill.so",
+    ):
+        if path and os.path.isfile(path):
+            _lib = ctypes.CDLL(path)
+            _lib.specter_prefill.argtypes = [c_char_p, c_size_t, POINTER(_PrefillOut)]
+            _lib.specter_prefill.restype = c_uint32
+            _C_PREFILL = _lib
+            break
+except Exception:
+    _C_PREFILL = None
 
 
 class Prefill:
-    __slots__ = ("tf", "vocab", "hits", "intensity", "neg_density", "n_tok", "key")
+    __slots__ = ("hits", "intensity", "neg_density", "n_tok", "key", "tf")
 
-    def __init__(self, tf: dict[str, int], vocab: frozenset[str], hits: list[float],
-                 intensity: float, neg_density: float, n_tok: int, key: int):
-        self.tf = tf
-        self.vocab = vocab
+    def __init__(self, hits: list[float], intensity: float, neg_density: float,
+                 n_tok: int, key: int, tf: dict[str, int] | None = None):
         self.hits = hits
         self.intensity = intensity
         self.neg_density = neg_density
         self.n_tok = n_tok
         self.key = key
+        self.tf = tf or {}
 
     @property
     def fingerprint(self) -> str:
         return format(self.key & 0xFFFFFFFFFFFFFFFF, "016x")
 
 
-def _prefill(state_json: str) -> Prefill:
-    # Single pass: lowercase tokens, counts, intensity, negation.
+def _prefill_py(state_json: str) -> Prefill:
     raw = state_json.lower()
-    tf: dict[str, int] = {}
+    counts = [0] * _N_CUES
     n_tok = 0
-    intens = 1.0
     neg = 0
+    intens = 1.0
+    tf: dict[str, int] = {}
     for m in _TOKEN.finditer(raw):
         t = m.group(0)
-        tf[t] = tf.get(t, 0) + 1
         n_tok += 1
-        if t in _NEG:
+        tf[t] = tf.get(t, 0) + 1
+        meta = _LEX.get(t)
+        if meta is None:
+            continue
+        mask, is_neg, fac = meta
+        if mask:
+            # branchless-ish bit walk for 7 banks
+            m = mask
+            b = 0
+            while m:
+                if m & 1:
+                    counts[b] += 1
+                m >>= 1
+                b += 1
+        if is_neg:
             neg += 1
-        f = _INT.get(t)
-        if f is not None:
-            intens *= f
-        else:
-            f = _SOFT.get(t)
-            if f is not None:
-                intens *= f
+        if fac != 1.0:
+            intens *= fac
     if intens < 0.5:
         intens = 0.5
     elif intens > 2.4:
         intens = 2.4
     scale = 1.0 / math.sqrt(n_tok + 1e-9)
-    hits = [0.0] * _N_CUES
-    for i, bank in enumerate(_CUE_SETS):
-        s = 0
-        for w in bank:
-            c = tf.get(w)
-            if c:
-                s += c
-        hits[i] = s * scale
-    key = hash(state_json)
-    return Prefill(tf, frozenset(tf), hits, intens, neg / max(1, n_tok), n_tok, key)
+    hits = [c * scale for c in counts]
+    return Prefill(hits, intens, neg / max(1, n_tok), n_tok, hash(state_json), tf)
 
 
-def _overlap(tf: dict[str, int], words: frozenset[str], scale: float) -> float:
-    s = 0
-    for w in words:
-        c = tf.get(w)
-        if c:
-            s += c
-    return s * scale
+def _prefill_c(state_json: str) -> Prefill:
+    out = _PrefillOut()
+    data = state_json.encode("utf-8", errors="ignore")
+    _C_PREFILL.specter_prefill(data, len(data), ctypes.byref(out))
+    hits = [float(out.hits[i]) for i in range(_N_CUES)]
+    return Prefill(hits, float(out.intensity), float(out.neg_density),
+                   int(out.n_tok), int(out.key), None)
+
+
+def _prefill(state_json: str) -> Prefill:
+    if _C_PREFILL is not None:
+        try:
+            return _prefill_c(state_json)
+        except Exception:
+            pass
+    return _prefill_py(state_json)
 
 
 def _base_noul(pf: Prefill, instr: str) -> float:
     yes = 0.0
-    # instruction routes which cues matter
     if "urgent" in instr or "time" in instr or "asap" in instr:
         yes += 2.4 * pf.hits[0]
     if "refund" in instr or "chargeback" in instr:
         yes += 2.4 * pf.hits[2]
     if "frustrat" in instr or "angry" in instr:
         yes += 2.4 * pf.hits[1]
-    # generic: shared tokens between instruction and state
-    scale = 1.0 / math.sqrt(pf.n_tok + 1e-9)
-    shared = 0
-    for m in _TOKEN.finditer(instr):
-        t = m.group(0)
-        c = pf.tf.get(t)
-        if c:
-            shared += c
-    yes += 1.5 * shared * scale
+    if pf.tf:
+        scale = 1.0 / math.sqrt(pf.n_tok + 1e-9)
+        shared = 0
+        for m in _TOKEN.finditer(instr):
+            c = pf.tf.get(m.group(0))
+            if c:
+                shared += c
+        yes += 1.5 * shared * scale
     return yes * pf.intensity
 
 
 def _base_choice(pf: Prefill, labels: tuple[str, ...]) -> list[float]:
     scale = 1.0 / math.sqrt(pf.n_tok + 1e-9)
     out: list[float] = []
+    tf = pf.tf
     for label in labels:
         low = label.lower()
         s = 0.0
         idx = _LABEL_CUE.get(low)
         if idx is not None:
             s += 2.0 * pf.hits[idx]
-        # token overlap with label words
-        for m in _TOKEN.finditer(low):
-            t = m.group(0)
-            c = pf.tf.get(t)
-            if c:
-                s += c * scale * 1.8
-            idx2 = _LABEL_CUE.get(t)
-            if idx2 is not None:
-                s += 1.2 * pf.hits[idx2]
+        if tf:
+            for m in _TOKEN.finditer(low):
+                t = m.group(0)
+                c = tf.get(t)
+                if c:
+                    s += c * scale * 1.8
+                idx2 = _LABEL_CUE.get(t)
+                if idx2 is not None:
+                    s += 1.2 * pf.hits[idx2]
+        else:
+            # C prefill path without tf: rely on label cue index only
+            pass
         out.append(s * pf.intensity)
     return out
 
@@ -162,24 +234,11 @@ def _base_score(pf: Prefill, n_levels: int) -> list[float]:
     return [-abs(i - target) for i in range(n_levels)]
 
 
-def _view_pair(base_no: float, base_yes: float, pf: Prefill) -> tuple[float, float, float, float, float, float]:
-    """Three (no, yes) pairs as flat tuple — no list-of-lists."""
-    n1 = max(0.35, 1.0 - 1.8 * pf.neg_density)
-    n2 = 0.85 + 0.25 * pf.intensity
-    return (
-        base_no, base_yes,
-        base_no, base_yes * n1,
-        base_no, base_yes * n2,
-    )
-
-
 def _avg3(a: float, b: float, c: float) -> float:
     return (a + b + c) * (1.0 / 3.0)
 
 
 class SystemOneLocalBackend:
-    """Prefill-once constrained local backend. model_id stable for calibration pin."""
-
     model_id = "specter-system-one-local-v1"
     __slots__ = ("_cache", "_last", "_order")
 
@@ -195,7 +254,7 @@ class SystemOneLocalBackend:
             self._last = hit
             return hit
         pf = _prefill(state_json)
-        if len(self._order) >= 32:
+        if len(self._order) >= 64:
             old = self._order.pop(0)
             self._cache.pop(old, None)
         self._cache[k] = pf
@@ -212,14 +271,12 @@ class SystemOneLocalBackend:
         t = question.type
         if t == "noul":
             yes = _base_noul(pf, question.instructions.lower())
-            # views: identity, negation damp, intensity boost — average yes/no
             n1 = max(0.35, 1.0 - 1.8 * pf.neg_density)
             n2 = 0.85 + 0.25 * pf.intensity
             y = _avg3(yes, yes * n1, yes * n2)
             return (-0.40, y - 0.25)
         if t == "choice":
-            labels = question.labels
-            base = _base_choice(pf, labels)
+            base = _base_choice(pf, question.labels)
             n1 = max(0.40, 1.0 - pf.neg_density)
             n2 = 0.90 + 0.15 * pf.intensity
             m = 0.0
@@ -229,19 +286,14 @@ class SystemOneLocalBackend:
                 if v > m:
                     m = v
                 out.append(v)
-            # relative margin (stable argmax, non-degenerate softmax)
             return tuple(v - 0.12 * m for v in out)
-        # score
-        labels = question.labels
-        base = _base_score(pf, len(labels))
+        base = _base_score(pf, len(question.labels))
         n1 = max(0.40, 1.0 - 1.5 * pf.neg_density)
         n2 = 0.90 + 0.20 * pf.intensity
         return tuple(_avg3(s, s * n1, s * n2) for s in base)
 
 
 class SystemOneCalibration:
-    """Entropy + peak + gap confidence. Domain-pinned."""
-
     __slots__ = ("_domain", "_t")
 
     def __init__(self, domain: str = "system-one-local", temperature: float = 0.9):
@@ -260,8 +312,7 @@ class SystemOneCalibration:
             return 0.05
         if n == 1:
             return max(0.05, float(probabilities[0]))
-        peak = probabilities[0]
-        second = 0.0
+        peak = second = 0.0
         for p in probabilities:
             if p > peak:
                 second = peak
@@ -274,8 +325,4 @@ class SystemOneCalibration:
                 ent -= p * math.log(p)
         inv_ent = 1.0 - ent / math.log(n)
         conf = 0.45 * inv_ent + 0.35 * peak + 0.20 * (peak - second)
-        if conf < 0.05:
-            return 0.05
-        if conf > 1.0:
-            return 1.0
-        return conf
+        return 0.05 if conf < 0.05 else (1.0 if conf > 1.0 else conf)

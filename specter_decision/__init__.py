@@ -8,7 +8,7 @@ from .backends import (
 )
 from .calibration import DomainCalibration, SimpleCalibration
 
-__version__ = "0.2.0rc4"
+__version__ = "0.2.0rc5"
 __author__ = "Guilherme Peralta Novaes"
 __all__ = [
     "Backend",
