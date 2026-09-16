@@ -24,7 +24,9 @@ def main(argv=None) -> int:
         if args.command == 'doctor':
             body = {'version': __version__, 'python': '.'.join(map(str, sys.version_info[:3])),
                     'status': 'installed', 'model_included': False, 'calibration_included': False,
-                    'production_ready': False, 'license_status': 'pending'}
+                    'production_ready': False, 'license_status': 'pending',
+                    'backends': ['system-one-local', 'local-lexical', 'typesafe-jev'],
+                    'default_local_backend': 'specter-system-one-local-v1'}
         elif args.command == 'schema':
             body = json.loads(files('specter_decision').joinpath('openapi.json').read_text(encoding='utf-8'))
         else:

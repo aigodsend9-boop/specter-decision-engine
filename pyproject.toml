@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "specter-decision-engine"
-version = "0.2.0rc2"
-description = "Typed numeric decision kernel and authenticated Specter-Core integration"
+version = "0.2.0rc3"
+description = "Typed numeric decision kernel with System-One local backends"
 authors = [{name = "Guilherme Peralta Novaes"}]
 requires-python = ">=3.11"
 dependencies = []
@@ -18,11 +18,12 @@ specter-decision = "specter_decision.cli:main"
 test = ["jsonschema>=4.18,<5"]
 
 [project.urls]
-Repository = "https://github.com/gamerbooker/specter-decision-engine"
-Issues = "https://github.com/gamerbooker/specter-decision-engine/issues"
+Repository = "https://github.com/aigodsend9-boop/specter-decision-engine"
+Issues = "https://github.com/aigodsend9-boop/specter-decision-engine/issues"
 
-[tool.setuptools]
-packages = ["specter_decision"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["specter_decision*"]
 
 [tool.setuptools.package-data]
 specter_decision = ["openapi.json", "py.typed"]
