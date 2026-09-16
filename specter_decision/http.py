@@ -24,7 +24,7 @@ from typing import Any, Mapping, Sequence
 from .service import CONTRACT, DecisionService, ServiceError
 from .types import Question
 
-__all__ = ["DecisionClient", "configure", "dispatch_decision", "openapi_document"]
+__all__ = ["DecisionClient", "configure", "dispatch", "dispatch_decision", "openapi_document"]
 
 _SERVICE: DecisionService | None = None
 _JSON = {"Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store"}
@@ -98,6 +98,56 @@ def dispatch_decision(
             error.status,
             {"status": "error", "error": error.code, "detail": error.detail},
         )
+
+
+def dispatch(handler: Any, service: DecisionService | None = None) -> bool:
+    """Compatibilidade direta com BaseHTTPRequestHandler do Specter Core.
+
+    Devolve False para rotas que não pertencem a /v1/decision, deixando o
+    servidor legado seguir seu fluxo normal.
+    """
+    path = getattr(handler, "path", "")
+    clean = urllib.parse.urlparse(path).path.rstrip("/") or "/"
+    if not clean.startswith("/v1/decision"):
+        return False
+
+    if service is not None:
+        configure(service)
+
+    method = getattr(handler, "command", "GET")
+    raw_headers = getattr(handler, "headers", {})
+    headers: dict[str, str] = {}
+    if hasattr(raw_headers, "items"):
+        for k, v in raw_headers.items():
+            headers[str(k)] = str(v)
+
+    body: bytes | None = None
+    if method in ("POST", "PUT", "PATCH"):
+        len_val = headers.get("content-length") or headers.get("Content-Length") or "0"
+        try:
+            content_length = int(len_val)
+        except (ValueError, TypeError):
+            content_length = 0
+        if content_length > 0 and hasattr(handler, "rfile"):
+            body = handler.rfile.read(content_length)
+        else:
+            body = b""
+
+    result = dispatch_decision(method, path, headers, body)
+    if result is None:
+        return False
+
+    status_code, resp_headers, resp_body = result
+    handler.send_response(status_code)
+    for k, v in resp_headers.items():
+        handler.send_header(k, v)
+    handler.end_headers()
+    if resp_body and hasattr(handler, "wfile"):
+        try:
+            handler.wfile.write(resp_body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+    return True
 
 
 class DecisionClient:

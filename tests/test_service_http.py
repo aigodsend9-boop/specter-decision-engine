@@ -16,7 +16,7 @@ from specter_decision import (
     SystemOneCalibration,
     SystemOneLocalBackend,
 )
-from specter_decision.http import DecisionClient, configure, dispatch_decision, openapi_document
+from specter_decision.http import DecisionClient, configure, dispatch, dispatch_decision, openapi_document
 from specter_decision.service import DecisionService, ServiceError, parse_questions
 
 TOKEN = "segredo-do-operador"
@@ -188,6 +188,53 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(document["openapi"], "3.1.1")
         self.assertIn("/v1/decision/evaluate", document["paths"])
         self.assertEqual(document, openapi_document())
+
+    def test_dispatch_handler_adapter(self):
+        import io
+        configure(DecisionService(token=TOKEN, engine_factory=_factory))
+
+        class MockHandler:
+            def __init__(self, command, path, headers=None, body=b""):
+                self.command = command
+                self.path = path
+                self.headers = headers or {}
+                self.rfile = io.BytesIO(body)
+                self.wfile = io.BytesIO()
+                self.status = None
+                self.sent_headers = {}
+
+            def send_response(self, code):
+                self.status = code
+
+            def send_header(self, k, v):
+                self.sent_headers[k] = v
+
+            def end_headers(self):
+                pass
+
+        # 1. Rota que não é nossa retorna False
+        unrelated = MockHandler("GET", "/api/message")
+        self.assertFalse(dispatch(unrelated))
+
+        # 2. Capabilities com token válido retorna True e status 200
+        cap_handler = MockHandler("GET", "/v1/decision/capabilities", {"Authorization": f"Bearer {TOKEN}"})
+        self.assertTrue(dispatch(cap_handler))
+        self.assertEqual(cap_handler.status, 200)
+        resp_data = json.loads(cap_handler.wfile.getvalue())
+        self.assertEqual(resp_data["status"], "ok")
+        self.assertEqual(resp_data["contract"], "specter-decision/0.3")
+
+        # 3. Evaluate POST com token válido retorna 200 e respostas
+        payload = json.dumps(_document()).encode("utf-8")
+        eval_handler = MockHandler("POST", "/v1/decision/evaluate", {
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Length": str(len(payload))
+        }, body=payload)
+        self.assertTrue(dispatch(eval_handler))
+        self.assertEqual(eval_handler.status, 200)
+        eval_resp = json.loads(eval_handler.wfile.getvalue())
+        self.assertEqual(eval_resp["status"], "ok")
+        self.assertEqual(len(eval_resp["answers"]), 2)
 
 
 class ClientTests(unittest.TestCase):
