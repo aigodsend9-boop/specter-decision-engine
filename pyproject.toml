@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "specter-decision-engine"
-version = "0.2.0rc3"
+version = "0.2.0rc4"
 description = "Typed numeric decision kernel with System-One local backends"
 authors = [{name = "Guilherme Peralta Novaes"}]
 requires-python = ">=3.11"
