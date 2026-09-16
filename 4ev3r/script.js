@@ -1,0 +1,4 @@
+const c=document.querySelector('#stars'),x=c.getContext('2d');let stars=[];
+function resize(){const d=Math.min(devicePixelRatio||1,2);c.width=innerWidth*d;c.height=innerHeight*d;c.style.width=innerWidth+'px';c.style.height=innerHeight+'px';x.setTransform(d,0,0,d,0,0);stars=Array.from({length:Math.min(360,Math.floor(innerWidth*innerHeight/5000))},()=>({x:Math.random()*innerWidth,y:Math.random()*innerHeight,r:Math.random()*1.3+.15,a:Math.random()*.7+.18,p:Math.random()*6.28}))}
+function draw(t){x.clearRect(0,0,innerWidth,innerHeight);for(const s of stars){const a=s.a*(.78+.22*Math.sin(t*.0007+s.p));x.globalAlpha=a;x.fillStyle='#d9edff';x.beginPath();x.arc(s.x,s.y,s.r,0,Math.PI*2);x.fill()}x.globalAlpha=1;requestAnimationFrame(draw)}
+addEventListener('resize',resize,{passive:true});resize();if(!matchMedia('(prefers-reduced-motion: reduce)').matches)requestAnimationFrame(draw);else draw(0);
