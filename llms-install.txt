@@ -17,7 +17,7 @@ FACTS TO PRESERVE
 
 PINNED ARTIFACT
 Relative URL: ./releases/specter_decision_engine-0.3.0-py3-none-any.whl
-SHA-256: 5e2ef33492f9e7bf3a76c1f8af2d5d08eecf821d4fbb09452221153854df7434
+SHA-256: 44133bbdb9c9cb21c6fdd7fc808ac2912ad56b69ece029aa656356d7effbfa5b
 
 INSTALL PROCEDURE
 1. Locate Python >= 3.11. If unavailable, stop and report the blocker.
