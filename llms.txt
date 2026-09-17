@@ -1,20 +1,21 @@
 # Specter Decision Engine
 
-> Specter Decision Engine is a Python 3.11+ framework for bounded typed numeric decisions. Current prerelease: v0.2.0rc5. It includes local System-One backend code, explicit failure states, OpenAPI integration, amortized prefill caching, and an optional native C prefill path.
+> Specter Decision Engine 0.3.0 is a Python 3.11+ kernel for bounded typed numeric decisions. It provides canonical state snapshots, Noul/Choice/Score outputs, optional BatchBackend evaluation, signature deduplication, versioned calibration artifacts, explicit abstention/failure states, receipts, an authenticated HTTP contract, and a deterministic local System-One baseline.
 
-Use the pinned installation brief for installation tasks. A successful package doctor check verifies installation only; it does not prove domain accuracy, calibration quality, benchmark reproducibility, or production readiness. License selection remains pending.
+Use the pinned installation brief for installation tasks. The local backend is a lexical rules baseline, not a trained semantic model. Installation and benchmark success do not prove domain accuracy, validated calibration, or production readiness. Distribution license selection remains pending; treat the source as all rights reserved unless the author states otherwise.
 
 ## Installation
 
-- [Pinned rc5 install brief](./llms-install.txt): Exact wheel, SHA-256, virtual-environment rules, verification steps, and scope constraints for humans or agents.
-- [Official v0.2.0rc5 release](https://github.com/aigodsend9-boop/specter-decision-engine/releases/tag/v0.2.0rc5): Published release metadata and assets.
+- [Pinned 0.3.0 install brief](./llms-install.txt): Exact wheel, SHA-256, environment rules, capability verification and scope constraints.
+- [Tagged v0.3.0 source](https://github.com/aigodsend9-boop/specter-decision-engine/tree/v0.3.0): Canonical source snapshot.
 
 ## Project
 
 - [Source repository](https://github.com/aigodsend9-boop/specter-decision-engine): Project source and history.
-- [Release wheel](./releases/specter_decision_engine-0.2.0rc5-py3-none-any.whl): Pinned wheel mirrored beside this site.
-- [SHA256SUMS](./releases/SHA256SUMS): Checksum file for the pinned wheel.
+- [Release wheel](./releases/specter_decision_engine-0.3.0-py3-none-any.whl): Checksum-pinned wheel built from the tagged source and mirrored beside this site.
+- [SHA256SUMS](./releases/SHA256SUMS): Checksum for the mirrored wheel.
+- [Benchmarks](https://github.com/aigodsend9-boop/specter-decision-engine/blob/v0.3.0/BENCHMARKS.md): Reproducible kernel-engineering measurements and limitations.
 
 ## Optional
 
-- [Human landing page](./): Visual project overview, architecture, installation UI, and agent handoff.
+- [Human landing page](./): Visual overview, benchmark panel, architecture, installation UI and agent handoff.
